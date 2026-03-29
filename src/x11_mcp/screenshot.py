@@ -60,9 +60,32 @@ def encode_for_api(img: Image.Image) -> tuple[str, int]:
     return (base64.b64encode(data).decode("ascii"), len(data))
 
 
+def _patch_randr_errors() -> None:
+    """Patch python-xlib's RandR error classes to inherit XError.
+
+    The upstream stubs (BadRRCrtcError, BadRRModeError, BadRROutputError) extend
+    bare Exception instead of XError, so they never get a sequence_number attribute.
+    When the X server sends one of these error events, python-xlib's display loop
+    crashes with AttributeError: 'BadRRCrtcError' object has no attribute
+    'sequence_number', poisoning the connection.  Rebasing onto XError fixes this.
+    """
+    try:
+        from Xlib import error as xerror
+        from Xlib.ext import randr
+
+        for cls_name in ("BadRRCrtcError", "BadRRModeError", "BadRROutputError"):
+            cls = getattr(randr, cls_name, None)
+            if cls is not None and not issubclass(cls, xerror.XError):
+                patched = type(cls_name, (xerror.XError,), dict(cls.__dict__))
+                setattr(randr, cls_name, patched)
+    except Exception:
+        pass
+
+
 def capture_fullscreen(display=None) -> tuple[Image.Image, dict]:
     from Xlib import X, display as xdisplay
-    from Xlib.ext import xfixes
+
+    _patch_randr_errors()
 
     if display is None:
         display = xdisplay.Display()
@@ -71,19 +94,31 @@ def capture_fullscreen(display=None) -> tuple[Image.Image, dict]:
     root_geom = root.get_geometry()
     full_w, full_h = root_geom.width, root_geom.height
 
-    mon_x, mon_y, mon_w, mon_h = _get_active_monitor_geometry(display, full_w, full_h)
-
+    # Use a separate Display connection for monitor detection to avoid
+    # cross-contamination from any Xrandr errors on the capture connection
     try:
-        xfixes.hide_cursor(root)
+        det_display = xdisplay.Display()
+        mon_x, mon_y, mon_w, mon_h = _get_active_monitor_geometry(det_display, full_w, full_h)
+        det_display.close()
     except Exception:
-        pass
+        mon_x, mon_y, mon_w, mon_h = 0, 0, full_w, full_h
+
+    # Hide cursor during capture
+    try:
+        from Xlib.ext import xfixes
+        xfixes.hide_cursor(root)
+        cursor_hidden = True
+    except Exception:
+        cursor_hidden = False
 
     raw = root.get_image(mon_x, mon_y, mon_w, mon_h, X.ZPixmap, 0xFFFFFFFF)
 
-    try:
-        xfixes.show_cursor(root)
-    except Exception:
-        pass
+    # Show cursor again
+    if cursor_hidden:
+        try:
+            xfixes.show_cursor(root)
+        except Exception:
+            pass
 
     img = Image.frombytes("RGBX", (mon_w, mon_h), raw.data, "raw", "BGRX")
     img = img.convert("RGB")
@@ -221,11 +256,13 @@ def take_screenshot(
 def _get_active_monitor_geometry(
     display, full_w: int, full_h: int
 ) -> tuple[int, int, int, int]:
+    """Find the geometry of the monitor containing the active window."""
     try:
         from Xlib import Xatom
 
         root = display.screen().root
 
+        # Get active window position
         prop = root.get_full_property(
             display.intern_atom("_NET_ACTIVE_WINDOW"), Xatom.WINDOW
         )
@@ -234,31 +271,46 @@ def _get_active_monitor_geometry(
 
         active_win_id = prop.value[0]
         active_win = display.create_resource_object("window", active_win_id)
-
         coords = active_win.translate_coords(root, 0, 0)
         win_x = abs(coords.x)
         win_y = abs(coords.y)
 
-        try:
-            from Xlib.ext import randr
-
-            resources = randr.get_screen_resources(root)
-            monitors = []
-            for output_id in resources.outputs:
-                output_info = randr.get_output_info(display, output_id, resources.config_timestamp)
-                if output_info.crtc:
-                    crtc_info = randr.get_crtc_info(display, output_info.crtc, resources.config_timestamp)
-                    monitors.append((crtc_info.x, crtc_info.y, crtc_info.width, crtc_info.height))
-
-            if not monitors:
-                return (0, 0, full_w, full_h)
-
-            for mx, my, mw, mh in monitors:
-                if mx <= win_x < mx + mw and my <= win_y < my + mh:
-                    return (mx, my, mw, mh)
-
-            return monitors[0]
-        except Exception:
+        # Parse monitor geometries from xrandr CLI (avoids python-xlib Xrandr bugs)
+        monitors = _parse_xrandr_monitors()
+        if not monitors:
             return (0, 0, full_w, full_h)
+
+        # Find which monitor contains the active window
+        for mx, my, mw, mh in monitors:
+            if mx <= win_x < mx + mw and my <= win_y < my + mh:
+                return (mx, my, mw, mh)
+
+        return monitors[0]
     except Exception:
         return (0, 0, full_w, full_h)
+
+
+def _parse_xrandr_monitors() -> list[tuple[int, int, int, int]]:
+    """Parse monitor geometries from xrandr CLI output."""
+    import re
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["xrandr", "--query"], capture_output=True, text=True, timeout=5
+        )
+        monitors = []
+        for line in result.stdout.splitlines():
+            if " connected" in line:
+                # Match patterns like "2560x1440+0+0" or "2560x1440+2560+0"
+                match = re.search(r"(\d+)x(\d+)\+(\d+)\+(\d+)", line)
+                if match:
+                    w, h, x, y = (
+                        int(match.group(1)),
+                        int(match.group(2)),
+                        int(match.group(3)),
+                        int(match.group(4)),
+                    )
+                    monitors.append((x, y, w, h))
+        return monitors
+    except Exception:
+        return []
