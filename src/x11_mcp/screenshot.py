@@ -7,7 +7,6 @@ Scales to Claude's target resolution using LANCZOS resampling.
 from __future__ import annotations
 
 import base64
-import hashlib
 from io import BytesIO
 from typing import Optional
 
@@ -18,7 +17,7 @@ from x11_mcp.scaling import get_state
 MAX_WIDTH = 1280
 MAX_HEIGHT = 800
 
-_last_hash: Optional[str] = None
+_last_hash: Optional[int] = None
 
 
 def compute_target_size(
@@ -38,9 +37,30 @@ def encode_jpeg(img: Image.Image, quality: int = 75) -> bytes:
     return buf.getvalue()
 
 
-def image_hash(img: Image.Image) -> str:
-    small = img.resize((16, 16), Image.Resampling.LANCZOS).convert("L")
-    return hashlib.md5(small.tobytes()).hexdigest()
+def image_hash(img: Image.Image) -> int:
+    """Compute a 64-bit perceptual difference hash (dHash).
+
+    Encodes relative brightness changes between adjacent pixels,
+    tolerant of minor rendering differences (cursor blink, clock tick).
+    """
+    small = img.resize((9, 8), Image.Resampling.LANCZOS).convert("L")
+    pixels = list(small.getdata())
+    bits = 0
+    for row in range(8):
+        for col in range(8):
+            idx = row * 9 + col
+            if pixels[idx] > pixels[idx + 1]:
+                bits |= 1 << (row * 8 + col)
+    return bits
+
+
+def images_match(hash1: int, hash2: int, threshold: int = 5) -> bool:
+    """Compare two dHash values via Hamming distance.
+
+    Args:
+        threshold: Max number of differing bits (default 5 of 64).
+    """
+    return bin(hash1 ^ hash2).count("1") <= threshold
 
 
 def scale_image(img: Image.Image) -> Image.Image:
@@ -82,7 +102,7 @@ def _patch_randr_errors() -> None:
         pass
 
 
-def capture_fullscreen(display=None) -> tuple[Image.Image, dict]:
+def capture_fullscreen(display=None, monitor: str | None = None) -> tuple[Image.Image, dict]:
     from Xlib import X, display as xdisplay
 
     _patch_randr_errors()
@@ -94,14 +114,9 @@ def capture_fullscreen(display=None) -> tuple[Image.Image, dict]:
     root_geom = root.get_geometry()
     full_w, full_h = root_geom.width, root_geom.height
 
-    # Use a separate Display connection for monitor detection to avoid
-    # cross-contamination from any Xrandr errors on the capture connection
-    try:
-        det_display = xdisplay.Display()
-        mon_x, mon_y, mon_w, mon_h = _get_active_monitor_geometry(det_display, full_w, full_h)
-        det_display.close()
-    except Exception:
-        mon_x, mon_y, mon_w, mon_h = 0, 0, full_w, full_h
+    mon_x, mon_y, mon_w, mon_h, mon_name, mon_warning = _get_target_monitor_geometry(
+        full_w, full_h, monitor=monitor
+    )
 
     # Hide cursor during capture
     try:
@@ -125,11 +140,14 @@ def capture_fullscreen(display=None) -> tuple[Image.Image, dict]:
 
     metadata = {
         "capture_mode": "fullscreen",
+        "monitor": mon_name,
         "native_width": mon_w,
         "native_height": mon_h,
         "monitor_x": mon_x,
         "monitor_y": mon_y,
     }
+    if mon_warning:
+        metadata["warning"] = mon_warning
     return (img, metadata)
 
 
@@ -205,6 +223,7 @@ def take_screenshot(
     region: dict | None = None,
     zoom_center: tuple[int, int] | None = None,
     zoom_size: int = 512,
+    monitor: str | None = None,
 ) -> tuple[str, dict]:
     global _last_hash
     state = get_state()
@@ -222,12 +241,12 @@ def take_screenshot(
     elif mode == "region" and region is not None:
         img, meta = capture_region(region["x"], region["y"], region["w"], region["h"])
     else:
-        img, meta = capture_fullscreen()
+        img, meta = capture_fullscreen(monitor=monitor)
 
     state.clear_zoom()
 
     h = image_hash(img)
-    meta["unchanged"] = (h == _last_hash)
+    meta["unchanged"] = images_match(h, _last_hash) if _last_hash is not None else False
     _last_hash = h
 
     scaled = scale_image(img)
@@ -253,45 +272,53 @@ def take_screenshot(
     return (b64, meta)
 
 
-def _get_active_monitor_geometry(
-    display, full_w: int, full_h: int
-) -> tuple[int, int, int, int]:
-    """Find the geometry of the monitor containing the active window."""
+def _get_target_monitor_geometry(
+    full_w: int, full_h: int, monitor: str | None = None
+) -> tuple[int, int, int, int, str, str | None]:
+    """Get the geometry of the target monitor for capture.
+
+    Strategy:
+    - If monitor name is given, use that specific monitor.
+    - Otherwise, default to the primary monitor.
+    - Falls back to full root geometry if detection fails.
+
+    Returns:
+        (x, y, w, h, monitor_name, warning_or_none)
+    """
     try:
-        from Xlib import Xatom
-
-        root = display.screen().root
-
-        # Get active window position
-        prop = root.get_full_property(
-            display.intern_atom("_NET_ACTIVE_WINDOW"), Xatom.WINDOW
-        )
-        if prop is None or len(prop.value) == 0:
-            return (0, 0, full_w, full_h)
-
-        active_win_id = prop.value[0]
-        active_win = display.create_resource_object("window", active_win_id)
-        coords = active_win.translate_coords(root, 0, 0)
-        win_x = abs(coords.x)
-        win_y = abs(coords.y)
-
-        # Parse monitor geometries from xrandr CLI (avoids python-xlib Xrandr bugs)
         monitors = _parse_xrandr_monitors()
         if not monitors:
-            return (0, 0, full_w, full_h)
+            return (0, 0, full_w, full_h, "unknown", None)
 
-        # Find which monitor contains the active window
-        for mx, my, mw, mh in monitors:
-            if mx <= win_x < mx + mw and my <= win_y < my + mh:
-                return (mx, my, mw, mh)
+        if monitor is not None:
+            target = _find_monitor_by_name(monitor, monitors)
+            if target:
+                return (target["x"], target["y"], target["w"], target["h"], target["name"], None)
+            # Requested monitor not found — fall back to primary with warning
+            primary = _get_primary_monitor(monitors)
+            if primary:
+                available = [m["name"] for m in monitors]
+                warning = (
+                    f'Monitor "{monitor}" not found. Available: {available}. '
+                    f'Falling back to primary monitor "{primary["name"]}".'
+                )
+                return (primary["x"], primary["y"], primary["w"], primary["h"], primary["name"], warning)
 
-        return monitors[0]
+        primary = _get_primary_monitor(monitors)
+        if primary:
+            return (primary["x"], primary["y"], primary["w"], primary["h"], primary["name"], None)
+
+        m = monitors[0]
+        return (m["x"], m["y"], m["w"], m["h"], m["name"], None)
     except Exception:
-        return (0, 0, full_w, full_h)
+        return (0, 0, full_w, full_h, "unknown", None)
 
 
-def _parse_xrandr_monitors() -> list[tuple[int, int, int, int]]:
-    """Parse monitor geometries from xrandr CLI output."""
+def _parse_xrandr_monitors() -> list[dict]:
+    """Parse monitor geometries from xrandr CLI output.
+
+    Returns list of dicts with keys: name, x, y, w, h, is_primary.
+    """
     import re
     import subprocess
     try:
@@ -301,7 +328,6 @@ def _parse_xrandr_monitors() -> list[tuple[int, int, int, int]]:
         monitors = []
         for line in result.stdout.splitlines():
             if " connected" in line:
-                # Match patterns like "2560x1440+0+0" or "2560x1440+2560+0"
                 match = re.search(r"(\d+)x(\d+)\+(\d+)\+(\d+)", line)
                 if match:
                     w, h, x, y = (
@@ -310,7 +336,35 @@ def _parse_xrandr_monitors() -> list[tuple[int, int, int, int]]:
                         int(match.group(3)),
                         int(match.group(4)),
                     )
-                    monitors.append((x, y, w, h))
+                    name = line.split()[0]
+                    is_primary = " primary " in line
+                    monitors.append({
+                        "name": name,
+                        "x": x, "y": y, "w": w, "h": h,
+                        "is_primary": is_primary,
+                    })
         return monitors
     except Exception:
         return []
+
+
+def _get_primary_monitor(monitors: list[dict] | None = None) -> dict | None:
+    """Return the primary monitor, or first connected if none marked primary."""
+    if monitors is None:
+        monitors = _parse_xrandr_monitors()
+    if not monitors:
+        return None
+    for mon in monitors:
+        if mon["is_primary"]:
+            return mon
+    return monitors[0]
+
+
+def _find_monitor_by_name(name: str, monitors: list[dict] | None = None) -> dict | None:
+    """Find a monitor by output name (e.g., 'DP-2', 'HDMI-1')."""
+    if monitors is None:
+        monitors = _parse_xrandr_monitors()
+    for mon in monitors:
+        if mon["name"] == name:
+            return mon
+    return None
