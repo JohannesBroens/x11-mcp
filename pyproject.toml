@@ -13,6 +13,7 @@ dependencies = [
     "python-uinput>=1.0.1",
     "Pillow>=10.0.0",
     "pydantic>=2.0.0",
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
