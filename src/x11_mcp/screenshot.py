@@ -109,91 +109,106 @@ def capture_fullscreen(display=None, monitor: str | None = None) -> tuple[Image.
 
     _patch_randr_errors()
 
-    if display is None:
+    owns_display = display is None
+    if owns_display:
         display = xdisplay.Display()
 
-    root = display.screen().root
-    root_geom = root.get_geometry()
-    full_w, full_h = root_geom.width, root_geom.height
-
-    mon_x, mon_y, mon_w, mon_h, mon_name, mon_warning = _get_target_monitor_geometry(
-        full_w, full_h, monitor=monitor
-    )
-
-    # Hide cursor during capture
     try:
-        from Xlib.ext import xfixes
-        xfixes.hide_cursor(root)
-        cursor_hidden = True
-    except Exception:
-        cursor_hidden = False
+        root = display.screen().root
+        root_geom = root.get_geometry()
+        full_w, full_h = root_geom.width, root_geom.height
 
-    raw = root.get_image(mon_x, mon_y, mon_w, mon_h, X.ZPixmap, 0xFFFFFFFF)
+        mon_x, mon_y, mon_w, mon_h, mon_name, mon_warning = _get_target_monitor_geometry(
+            full_w, full_h, monitor=monitor
+        )
 
-    # Show cursor again
-    if cursor_hidden:
+        # Hide cursor during capture
         try:
-            xfixes.show_cursor(root)
+            from Xlib.ext import xfixes
+            xfixes.hide_cursor(root)
+            cursor_hidden = True
         except Exception:
-            pass
+            cursor_hidden = False
 
-    img = Image.frombytes("RGBX", (mon_w, mon_h), raw.data, "raw", "BGRX")
-    img = img.convert("RGB")
+        raw = root.get_image(mon_x, mon_y, mon_w, mon_h, X.ZPixmap, 0xFFFFFFFF)
 
-    metadata = {
-        "capture_mode": "fullscreen",
-        "monitor": mon_name,
-        "native_width": mon_w,
-        "native_height": mon_h,
-        "monitor_x": mon_x,
-        "monitor_y": mon_y,
-    }
-    if mon_warning:
-        metadata["warning"] = mon_warning
-    return (img, metadata)
+        # Show cursor again
+        if cursor_hidden:
+            try:
+                xfixes.show_cursor(root)
+            except Exception:
+                pass
+
+        img = Image.frombytes("RGBX", (mon_w, mon_h), raw.data, "raw", "BGRX")
+        img = img.convert("RGB")
+
+        metadata = {
+            "capture_mode": "fullscreen",
+            "monitor": mon_name,
+            "native_width": mon_w,
+            "native_height": mon_h,
+            "monitor_x": mon_x,
+            "monitor_y": mon_y,
+        }
+        if mon_warning:
+            metadata["warning"] = mon_warning
+        return (img, metadata)
+    finally:
+        if owns_display:
+            display.close()
 
 
 def capture_window(window_id: int, display=None) -> tuple[Image.Image, dict]:
     from Xlib import X, display as xdisplay
 
-    if display is None:
+    owns_display = display is None
+    if owns_display:
         display = xdisplay.Display()
 
-    window = display.create_resource_object("window", window_id)
-    geom = window.get_geometry()
-    w, h = geom.width, geom.height
+    try:
+        window = display.create_resource_object("window", window_id)
+        geom = window.get_geometry()
+        w, h = geom.width, geom.height
 
-    raw = window.get_image(0, 0, w, h, X.ZPixmap, 0xFFFFFFFF)
-    img = Image.frombytes("RGBX", (w, h), raw.data, "raw", "BGRX")
-    img = img.convert("RGB")
+        raw = window.get_image(0, 0, w, h, X.ZPixmap, 0xFFFFFFFF)
+        img = Image.frombytes("RGBX", (w, h), raw.data, "raw", "BGRX")
+        img = img.convert("RGB")
 
-    metadata = {
-        "capture_mode": "window",
-        "window_id": window_id,
-        "native_width": w,
-        "native_height": h,
-    }
-    return (img, metadata)
+        metadata = {
+            "capture_mode": "window",
+            "window_id": window_id,
+            "native_width": w,
+            "native_height": h,
+        }
+        return (img, metadata)
+    finally:
+        if owns_display:
+            display.close()
 
 
 def capture_region(x: int, y: int, w: int, h: int, display=None) -> tuple[Image.Image, dict]:
     from Xlib import X, display as xdisplay
 
-    if display is None:
+    owns_display = display is None
+    if owns_display:
         display = xdisplay.Display()
 
-    root = display.screen().root
-    raw = root.get_image(x, y, w, h, X.ZPixmap, 0xFFFFFFFF)
-    img = Image.frombytes("RGBX", (w, h), raw.data, "raw", "BGRX")
-    img = img.convert("RGB")
+    try:
+        root = display.screen().root
+        raw = root.get_image(x, y, w, h, X.ZPixmap, 0xFFFFFFFF)
+        img = Image.frombytes("RGBX", (w, h), raw.data, "raw", "BGRX")
+        img = img.convert("RGB")
 
-    metadata = {
-        "capture_mode": "region",
-        "region": {"x": x, "y": y, "w": w, "h": h},
-        "native_width": w,
-        "native_height": h,
-    }
-    return (img, metadata)
+        metadata = {
+            "capture_mode": "region",
+            "region": {"x": x, "y": y, "w": w, "h": h},
+            "native_width": w,
+            "native_height": h,
+        }
+        return (img, metadata)
+    finally:
+        if owns_display:
+            display.close()
 
 
 def capture_zoom(x: int, y: int, size: int = 512, display=None) -> tuple[Image.Image, dict]:
