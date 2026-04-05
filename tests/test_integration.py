@@ -66,6 +66,26 @@ class TestWindowIntegration:
         assert monitors[0]["width"] > 0
 
 
+class TestXshmIntegration:
+    def test_xshm_capture_produces_valid_image(self):
+        """XShm capture returns a valid image with correct dimensions."""
+        from x11_mcp.screenshot import take_screenshot
+
+        b64, meta = take_screenshot(mode="fullscreen")
+        assert len(b64) > 0
+        assert meta["api_width"] > 0
+        # Should report capture method
+        assert "capture_method" in meta
+        assert meta["capture_method"] in ("xshm", "get_image")
+
+    def test_capture_method_reported_in_metadata(self):
+        """Metadata includes which capture path was used."""
+        from x11_mcp.screenshot import take_screenshot
+
+        _, meta = take_screenshot(mode="fullscreen")
+        assert "capture_method" in meta
+
+
 class TestCalibration:
     def test_calibration_runs(self):
         from x11_mcp.screenshot import take_screenshot
