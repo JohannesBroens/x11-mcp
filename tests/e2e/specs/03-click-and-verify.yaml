@@ -1,0 +1,20 @@
+name: "Screenshot pipeline end-to-end"
+description: "Verify full pipeline: screenshot, scaling state, metadata integrity"
+tags: [pipeline, smoke]
+timeout: 20
+
+task: |
+  Take a fullscreen screenshot, then take another one immediately.
+  Report both metadata objects.
+  The second should have unchanged=true or unchanged=false.
+
+verify:
+  - type: output_contains
+    value: "unchanged"
+  - type: output_contains
+    value: "api_width"
+  - type: output_contains
+    value: "scale_x"
+  - type: output_not_contains
+    value: "error"
+    case_sensitive: false

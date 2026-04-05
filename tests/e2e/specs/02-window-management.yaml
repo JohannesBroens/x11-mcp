@@ -1,0 +1,13 @@
+name: "Window listing"
+description: "Verify window listing returns structured window data"
+tags: [window, smoke]
+timeout: 15
+
+task: |
+  List all visible windows.
+  Report the window titles and IDs.
+
+verify:
+  - type: output_not_contains
+    value: "error"
+    case_sensitive: false

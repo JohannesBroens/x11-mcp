@@ -1,0 +1,19 @@
+name: "Monitor geometry detection"
+description: "Verify monitor list includes primary flag and correct dimensions"
+tags: [monitor, smoke]
+timeout: 15
+
+task: |
+  Get the list of monitors using screen_info or get_monitor_geometries.
+  Report the monitor names, dimensions, and which is primary.
+
+verify:
+  - type: output_contains
+    value: "is_primary"
+  - type: output_contains
+    value: "width"
+  - type: output_contains
+    value: "height"
+  - type: output_not_contains
+    value: "error"
+    case_sensitive: false

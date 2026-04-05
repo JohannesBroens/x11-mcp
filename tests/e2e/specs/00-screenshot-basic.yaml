@@ -1,0 +1,20 @@
+name: "Screenshot captures primary monitor"
+description: "Verify the screenshot tool returns an image from the primary display with correct metadata"
+tags: [screenshot, smoke]
+timeout: 15
+
+task: |
+  Take a fullscreen screenshot using the screenshot tool.
+  Report the metadata as JSON including:
+  monitor, native_width, native_height, capture_method, byte_size.
+
+verify:
+  - type: output_contains
+    value: "monitor"
+  - type: output_contains
+    value: "native_width"
+  - type: output_contains
+    value: "capture_method"
+  - type: output_not_contains
+    value: "error"
+    case_sensitive: false
