@@ -7,6 +7,7 @@ Queries use python-xlib (fast, in-process). Resize/move uses wmctrl
 from __future__ import annotations
 
 import subprocess
+import time
 from typing import Optional
 
 from x11_mcp.scaling import get_state
@@ -119,14 +120,36 @@ def get_active_window() -> Optional[dict]:
 
 
 def get_monitor_geometries() -> list[dict]:
-    from Xlib import display as xdisplay
-    from Xlib.ext import randr
+    """Return monitor geometries with primary annotation.
 
-    d = xdisplay.Display()
-    root = d.screen().root
-    monitors = []
+    Uses xrandr CLI (more reliable than python-xlib's RandR bindings on Nvidia).
+    Falls back to python-xlib if xrandr is unavailable.
+    """
+    from x11_mcp.screenshot import _parse_xrandr_monitors
 
+    xrandr_mons = _parse_xrandr_monitors()
+    if xrandr_mons:
+        return [
+            {
+                "name": m["name"],
+                "x": m["x"],
+                "y": m["y"],
+                "width": m["w"],
+                "height": m["h"],
+                "is_primary": m["is_primary"],
+            }
+            for m in xrandr_mons
+        ]
+
+    # Fallback to python-xlib
     try:
+        from Xlib import display as xdisplay
+        from Xlib.ext import randr
+
+        d = xdisplay.Display()
+        root = d.screen().root
+        monitors = []
+
         resources = randr.get_screen_resources(root)
         for output_id in resources.outputs:
             output_info = randr.get_output_info(d, output_id, resources.config_timestamp)
@@ -138,16 +161,27 @@ def get_monitor_geometries() -> list[dict]:
                     "width": crtc.width,
                     "height": crtc.height,
                     "name": output_info.name,
+                    "is_primary": len(monitors) == 0,
                 })
+        d.close()
+        if monitors:
+            return monitors
     except Exception:
-        geom = root.get_geometry()
-        monitors.append({
+        pass
+
+    # Last resort: full root geometry
+    try:
+        from Xlib import display as xdisplay
+        d = xdisplay.Display()
+        geom = d.screen().root.get_geometry()
+        d.close()
+        return [{
             "x": 0, "y": 0,
             "width": geom.width, "height": geom.height,
-            "name": "default",
-        })
-    d.close()
-    return monitors
+            "name": "default", "is_primary": True,
+        }]
+    except Exception:
+        return []
 
 
 def focus_window(window_id: int | None = None, name: str | None = None) -> bool:
@@ -216,6 +250,96 @@ def move_window(window_id: int, x: int, y: int) -> bool:
         return True
     except Exception:
         return False
+
+
+def ensure_on_monitor(
+    window_id: int,
+    monitor_name: str | None = None,
+    optimize: bool = True,
+) -> dict:
+    """Move a window to the target monitor, optionally resizing for capture.
+
+    Args:
+        window_id: X11 window ID.
+        monitor_name: Target monitor output name (e.g., "DP-2"). Defaults to primary.
+        optimize: If True, resize to MAX_WIDTH x MAX_HEIGHT for 1:1 screenshot mapping.
+
+    Returns:
+        Dict with result info including final position and any warnings.
+    """
+    from x11_mcp.screenshot import _get_primary_monitor, _find_monitor_by_name
+
+    if monitor_name:
+        target = _find_monitor_by_name(monitor_name)
+    else:
+        target = _get_primary_monitor()
+
+    if target is None:
+        return {"error": "Could not determine target monitor"}
+
+    target_x, target_y = target["x"], target["y"]
+    target_w, target_h = target["w"], target["h"]
+
+    if optimize:
+        win_w = min(MAX_WIDTH, target_w)
+        win_h = min(MAX_HEIGHT, target_h)
+    else:
+        # Preserve current window size, just move it
+        try:
+            from Xlib import display as xdisplay
+            d = xdisplay.Display()
+            win = d.create_resource_object("window", window_id)
+            geom = win.get_geometry()
+            win_w, win_h = geom.width, geom.height
+            d.close()
+        except Exception:
+            win_w, win_h = MAX_WIDTH, MAX_HEIGHT
+
+    # Move and optionally resize via wmctrl (single command, handles decorations)
+    try:
+        _run_check([
+            "wmctrl", "-i", "-r", hex(window_id),
+            "-e", f"0,{target_x},{target_y},{win_w},{win_h}"
+        ])
+    except (RuntimeError, FileNotFoundError):
+        # Fallback: separate move + resize
+        move_window(window_id, target_x, target_y)
+        if optimize:
+            resize_window(window_id, win_w, win_h)
+
+    # Focus the window
+    focus_window(window_id=window_id)
+
+    # Verify final geometry
+    time.sleep(0.1)
+    actual_w, actual_h = win_w, win_h
+    try:
+        from Xlib import display as xdisplay
+        d = xdisplay.Display()
+        win = d.create_resource_object("window", window_id)
+        geom = win.get_geometry()
+        actual_w, actual_h = geom.width, geom.height
+        d.close()
+    except Exception:
+        pass
+
+    result = {
+        "window_id": window_id,
+        "monitor": target.get("name", "unknown"),
+        "x": target_x,
+        "y": target_y,
+        "width": actual_w,
+        "height": actual_h,
+        "optimized": optimize,
+    }
+
+    if optimize and (actual_w != win_w or actual_h != win_h):
+        result["warning"] = (
+            f"Window resized to {actual_w}x{actual_h} instead of requested "
+            f"{win_w}x{win_h}. The window may have size constraints."
+        )
+
+    return result
 
 
 def optimize_for_capture(window_id: int | None = None) -> dict:

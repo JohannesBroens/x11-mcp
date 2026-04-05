@@ -24,6 +24,7 @@ from x11_mcp.window import (
     resize_window as _resize_window,
     move_window as _move_window,
     optimize_for_capture as _optimize,
+    ensure_on_monitor as _ensure_on_monitor,
 )
 from x11_mcp.accessibility import (
     get_accessibility_tree as _get_tree,
@@ -31,6 +32,17 @@ from x11_mcp.accessibility import (
 )
 
 mcp = FastMCP("x11-mcp")
+
+
+def _resolve_window(window_id: int | None, name: str | None) -> int | None:
+    """Resolve a window by ID or title substring. Returns window ID or None."""
+    if window_id is not None:
+        return window_id
+    if name is not None:
+        for w in _list_windows():
+            if name.lower() in w.get("title", "").lower():
+                return w["id"]
+    return None
 
 
 @mcp.tool()
@@ -41,19 +53,27 @@ def screenshot(
     region_y: int | None = None,
     region_w: int | None = None,
     region_h: int | None = None,
+    monitor: str | None = None,
 ) -> list:
     """Capture the screen. Returns an image Claude can see.
 
+    Defaults to the PRIMARY monitor — not the monitor with the active window.
+    This ensures you capture the target display, not the one running Claude.
+
+    IMPORTANT: Always take a screenshot after performing actions (clicks, typing)
+    to verify the result. Never assume an action succeeded without visual confirmation.
+
     Args:
-        mode: "fullscreen" (active monitor), "window" (specific window), or "region" (arbitrary rect).
+        mode: "fullscreen" (primary monitor), "window" (specific window), or "region" (arbitrary rect).
         window_id: X11 window ID (required for mode="window").
         region_x, region_y, region_w, region_h: Region bounds (required for mode="region").
+        monitor: Monitor output name (e.g., "DP-2", "HDMI-1"). Defaults to primary monitor.
     """
     region = None
     if mode == "region" and all(v is not None for v in [region_x, region_y, region_w, region_h]):
         region = {"x": region_x, "y": region_y, "w": region_w, "h": region_h}
 
-    b64, meta = take_screenshot(mode=mode, window_id=window_id, region=region)
+    b64, meta = take_screenshot(mode=mode, window_id=window_id, region=region, monitor=monitor)
     return [
         Image(data=b64, format="jpeg"),
         json.dumps(meta, indent=2),
@@ -83,6 +103,10 @@ def zoom(x: int, y: int, size: int = 512) -> list:
 @mcp.tool()
 def mouse_click(x: int, y: int, button: str = "left", count: int = 1) -> str:
     """Click at coordinates. Coordinates are in the same space as the last screenshot.
+
+    TIP: Use click_and_verify() instead if you want automatic screenshot verification
+    after clicking. If using this tool directly, always take a screenshot() afterward
+    to confirm the click had the intended effect.
 
     Args:
         x: X coordinate.
@@ -212,7 +236,10 @@ def find_element(query: str, max_depth: int = 5) -> str:
 
 @mcp.tool()
 def list_windows() -> str:
-    """List all visible windows with their IDs, titles, and geometry."""
+    """List all visible windows with their IDs, titles, and geometry.
+
+    Use this to find window IDs for focus_and_capture() or ensure_window_on_monitor().
+    Window positions indicate which monitor they're on — compare with screen_info() monitors."""
     windows = _list_windows()
     if not windows:
         return "No windows found"
@@ -228,6 +255,9 @@ def list_windows() -> str:
 @mcp.tool()
 def focus_window(window_id: int | None = None, name: str | None = None) -> str:
     """Bring a window to front and focus it.
+
+    TIP: Use focus_and_capture() instead for a complete workflow that also moves
+    the window to the primary monitor and returns a screenshot.
 
     Args:
         window_id: X11 window ID (from list_windows).
@@ -278,6 +308,108 @@ def optimize_for_capture(window_id: int | None = None) -> str:
     """
     result = _optimize(window_id=window_id)
     return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def ensure_window_on_monitor(
+    window_id: int | None = None,
+    name: str | None = None,
+    monitor: str | None = None,
+    optimize: bool = True,
+) -> str:
+    """Move a window to the primary monitor (or specified monitor), focus it, and optionally
+    resize it to 1280x800 for pixel-perfect screenshots.
+
+    Use this before interacting with a window to guarantee it's on the correct display.
+    Essential in multi-monitor setups where windows may open on the wrong screen.
+
+    Args:
+        window_id: X11 window ID (from list_windows).
+        name: Window title substring to match (alternative to window_id).
+        monitor: Target monitor name (e.g., "DP-2"). Defaults to primary monitor.
+        optimize: If True (default), resize to 1280x800 for 1:1 screenshot mapping.
+                  Set False to preserve the window's current size.
+    """
+    window_id = _resolve_window(window_id, name)
+    if window_id is None:
+        return f'Error: no window matching "{name}" found' if name else "Error: provide either window_id or name"
+
+    result = _ensure_on_monitor(window_id, monitor_name=monitor, optimize=optimize)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def focus_and_capture(
+    window_id: int | None = None,
+    name: str | None = None,
+    monitor: str | None = None,
+) -> list:
+    """Move a window to the primary monitor, focus it, and take a screenshot — all in one call.
+
+    This is the recommended way to start interacting with a window. It ensures the
+    window is on the correct display and returns a fresh screenshot so you can see
+    exactly what's on screen before clicking.
+
+    Args:
+        window_id: X11 window ID (from list_windows).
+        name: Window title substring to match (alternative to window_id).
+        monitor: Target monitor name. Defaults to primary monitor.
+    """
+    window_id = _resolve_window(window_id, name)
+    if window_id is None:
+        msg = f'Error: no window matching "{name}" found' if name else "Error: provide either window_id or name"
+        return [msg]
+
+    # Move to monitor + focus + optimize
+    move_result = _ensure_on_monitor(window_id, monitor_name=monitor, optimize=True)
+
+    # Brief pause for window manager to settle
+    time.sleep(0.2)
+
+    # Take screenshot
+    b64, meta = take_screenshot(mode="fullscreen", monitor=monitor)
+    meta["window_setup"] = move_result
+
+    return [
+        Image(data=b64, format="jpeg"),
+        json.dumps(meta, indent=2),
+    ]
+
+
+@mcp.tool()
+def click_and_verify(
+    x: int,
+    y: int,
+    button: str = "left",
+    count: int = 1,
+    wait_ms: int = 500,
+) -> list:
+    """Click at coordinates and immediately take a screenshot to verify the result.
+
+    Combines mouse_click + wait + screenshot into one call. Use this instead of
+    separate click + screenshot calls to ensure you always verify your actions.
+
+    Args:
+        x: X coordinate (API space, from last screenshot).
+        y: Y coordinate (API space, from last screenshot).
+        button: "left", "right", or "middle".
+        count: Number of clicks (1=single, 2=double, 3=triple).
+        wait_ms: Milliseconds to wait after clicking before taking the screenshot (default 500).
+    """
+    dev = get_input_device()
+    dev.click(x, y, button=button, count=count)
+
+    # Wait for UI to respond
+    time.sleep(wait_ms / 1000.0)
+
+    # Take verification screenshot
+    b64, meta = take_screenshot(mode="fullscreen")
+    meta["click"] = {"x": x, "y": y, "button": button, "count": count}
+
+    return [
+        Image(data=b64, format="jpeg"),
+        json.dumps(meta, indent=2),
+    ]
 
 
 @mcp.tool()
@@ -333,9 +465,25 @@ def batch(actions: list[dict]) -> str:
 
 @mcp.tool()
 def screen_info() -> str:
-    """Get screen resolution, mouse position, and scaling state."""
+    """Get screen resolution, mouse position, and scaling state.
+
+    Returns monitor list with is_primary flags so you know which display
+    to target. The primary monitor is where you should automate — it's
+    typically NOT the monitor running Claude.
+    """
     state = get_state()
     monitors = get_monitor_geometries()
+
+    # Annotate which monitor contains the active window
+    active = get_active_window()
+    if active:
+        for mon in monitors:
+            if (mon["x"] <= active["x"] < mon["x"] + mon["width"]
+                    and mon["y"] <= active["y"] < mon["y"] + mon["height"]):
+                mon["has_active_window"] = True
+                mon["active_window_title"] = active.get("title", "")
+                break
+
     info = {
         "monitors": monitors,
         "scaling": {
@@ -439,6 +587,10 @@ def clipboard(action: str = "get", text: str | None = None) -> str:
 @mcp.tool()
 def launch_app(command: str) -> str:
     """Launch a desktop application.
+
+    After launching, use focus_and_capture() with the expected window title
+    to move the new window to the primary monitor and get a screenshot.
+    New windows may open on any monitor.
 
     Args:
         command: The command to run (e.g., "firefox", "nautilus ~/Documents").
