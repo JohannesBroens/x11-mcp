@@ -7,6 +7,7 @@ Scales to Claude's target resolution using LANCZOS resampling.
 from __future__ import annotations
 
 import base64
+import time as _time
 from io import BytesIO
 from typing import Optional
 
@@ -18,6 +19,7 @@ MAX_WIDTH = 1280
 MAX_HEIGHT = 800
 
 _last_hash: Optional[int] = None
+_xrandr_cache: tuple[float, list[dict]] = (0.0, [])
 
 
 def compute_target_size(
@@ -318,7 +320,14 @@ def _parse_xrandr_monitors() -> list[dict]:
     """Parse monitor geometries from xrandr CLI output.
 
     Returns list of dicts with keys: name, x, y, w, h, is_primary.
+    Results are cached for 1 second to avoid repeated subprocess calls
+    during compound operations like focus_and_capture().
     """
+    global _xrandr_cache
+    now = _time.monotonic()
+    if now - _xrandr_cache[0] < 1.0 and _xrandr_cache[1]:
+        return _xrandr_cache[1]
+
     import re
     import subprocess
     try:
@@ -343,6 +352,7 @@ def _parse_xrandr_monitors() -> list[dict]:
                         "x": x, "y": y, "w": w, "h": h,
                         "is_primary": is_primary,
                     })
+        _xrandr_cache = (now, monitors)
         return monitors
     except Exception:
         return []

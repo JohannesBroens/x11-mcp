@@ -1,3 +1,4 @@
+import subprocess
 from io import BytesIO
 from unittest.mock import patch, MagicMock
 
@@ -124,6 +125,8 @@ HDMI-1 connected 2560x1440+2560+0 (normal left inverted right x axis y axis) 597
 
 def _mock_xrandr(output: str):
     """Return a patch that makes _parse_xrandr_monitors use the given xrandr output."""
+    from x11_mcp import screenshot as ss
+    ss._xrandr_cache = (0.0, [])
     mock_result = MagicMock()
     mock_result.stdout = output
     return patch("subprocess.run", return_value=mock_result)
@@ -212,7 +215,39 @@ class TestGetTargetMonitorGeometry:
         assert "not found" in warning
 
     def test_no_monitors_falls_back_to_full(self):
+        from x11_mcp import screenshot as ss
+        ss._xrandr_cache = (0.0, [])
         with patch("subprocess.run", side_effect=FileNotFoundError):
             x, y, w, h, name, warning = _get_target_monitor_geometry(5120, 1440)
         assert (x, y, w, h) == (0, 0, 5120, 1440)
         assert name == "unknown"
+
+
+class TestXrandrCache:
+    def test_cache_prevents_repeated_subprocess_calls(self):
+        """Second call within 1s should use cache, not subprocess."""
+        from x11_mcp import screenshot as ss
+        # Reset cache
+        ss._xrandr_cache = (0.0, [])
+
+        call_count = 0
+        original_run = subprocess.run
+
+        def counting_run(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return original_run(*args, **kwargs)
+
+        with _mock_xrandr(XRANDR_DUAL_MONITOR):
+            # First call — hits subprocess
+            monitors1 = _parse_xrandr_monitors()
+            assert len(monitors1) == 2
+
+        # Now the cache is populated. Patch subprocess to count calls.
+        with patch("subprocess.run", side_effect=counting_run):
+            monitors2 = _parse_xrandr_monitors()
+            assert monitors2 == monitors1
+            assert call_count == 0  # cache hit, no subprocess call
+
+        # Reset cache for other tests
+        ss._xrandr_cache = (0.0, [])
