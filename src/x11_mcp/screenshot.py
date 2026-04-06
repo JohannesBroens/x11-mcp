@@ -303,6 +303,7 @@ def take_screenshot(
     zoom_center: tuple[int, int] | None = None,
     zoom_size: int = 512,
     monitor: str | None = None,
+    show_cursor: bool = False,
 ) -> tuple[bytes, dict]:
     global _last_hash
     state = get_state()
@@ -320,7 +321,7 @@ def take_screenshot(
     elif mode == "region" and region is not None:
         img, meta = capture_region(region["x"], region["y"], region["w"], region["h"])
     else:
-        img, meta = capture_fullscreen(monitor=monitor)
+        img, meta = capture_fullscreen(monitor=monitor, show_cursor=show_cursor)
 
     state.clear_zoom()
 

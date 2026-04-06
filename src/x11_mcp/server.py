@@ -66,6 +66,7 @@ def screenshot(
     region_w: int | None = None,
     region_h: int | None = None,
     monitor: str | None = None,
+    show_cursor: bool = False,
 ) -> list:
     """Capture the screen. Returns an image Claude can see.
 
@@ -80,13 +81,14 @@ def screenshot(
         window_id: X11 window ID (required for mode="window").
         region_x, region_y, region_w, region_h: Region bounds (required for mode="region").
         monitor: Monitor output name (e.g., "DP-2", "HDMI-1"). Defaults to primary monitor.
+        show_cursor: If True, include the mouse cursor in the screenshot. Default False.
     """
     region = None
     if mode == "region" and all(v is not None for v in [region_x, region_y, region_w, region_h]):
         region = {"x": region_x, "y": region_y, "w": region_w, "h": region_h}
 
     try:
-        b64, meta = take_screenshot(mode=mode, window_id=window_id, region=region, monitor=monitor)
+        b64, meta = take_screenshot(mode=mode, window_id=window_id, region=region, monitor=monitor, show_cursor=show_cursor)
     except Exception as e:
         return [json.dumps({"error": str(e), "capture_mode": mode})]
     return [
@@ -590,18 +592,28 @@ def calibrate() -> str:
     for name, ax, ay in test_points:
         expected_sx, expected_sy = state.api_to_screen(ax, ay)
         dev.move(ax, ay)
-        time.sleep(0.1)
 
-        try:
-            from Xlib import display as xdisplay
-
-            d = xdisplay.Display()
+        # Poll cursor position until it matches or timeout (100ms max)
+        actual_sx, actual_sy = 0, 0
+        settled = False
+        for _ in range(10):
+            time.sleep(0.01)
             try:
-                data = d.screen().root.query_pointer()
-                actual_sx, actual_sy = data.root_x, data.root_y
-            finally:
-                d.close()
-        except Exception:
+                import re as _re
+                r = subprocess.run(
+                    ["xdotool", "getmouselocation"],
+                    capture_output=True, text=True, timeout=1,
+                )
+                m = _re.match(r"x:(\d+) y:(\d+)", r.stdout)
+                if m:
+                    actual_sx, actual_sy = int(m.group(1)), int(m.group(2))
+                    if abs(actual_sx - expected_sx) <= 2 and abs(actual_sy - expected_sy) <= 2:
+                        settled = True
+                        break
+            except Exception:
+                break
+
+        if actual_sx == 0 and actual_sy == 0 and not settled:
             results.append(f"  {name}: COULD NOT READ POSITION")
             continue
 
@@ -658,10 +670,12 @@ def open_app(name: str) -> str:
     dev = get_input_device()
     # Press Super to open launcher
     dev.key("super")
-    time.sleep(0.7)
+    # DE launcher animation — inherently timing-dependent, no observable state to poll
+    time.sleep(0.5)
     # Type the app name
     dev.type_text(name, delay_ms=30)
-    time.sleep(0.5)
+    # Wait for search results to populate — DE-dependent, cannot be polled
+    time.sleep(0.3)
     # Press Enter to launch top result
     dev.key("Return")
     return f"Opened launcher and searched for '{name}'. Press Enter sent."
