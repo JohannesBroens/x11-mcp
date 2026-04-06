@@ -1,0 +1,42 @@
+name: "Multi-app desktop workflow"
+description: >
+  Complex end-to-end automation test: open YouTube Music from the taskbar,
+  play some music, then switch to Steam, set status to Invisible, launch
+  Dota 2, and navigate to the latest patch notes to find information about
+  the hero Lich.
+tags: [workflow, integration, music, steam, dota2]
+timeout: 120
+
+task: |
+  Perform the following multi-app desktop automation workflow:
+
+  1. Find and open YouTube Music from the application dock/taskbar on the left
+     side of the screen. Once it opens, pick any song or playlist and start
+     playing music — the choice doesn't matter, just get something playing.
+
+  2. After music is playing, switch to Steam. Set your online status to
+     "Invisible" (so friends can't see you online).
+
+  3. Through Steam, launch Dota 2.
+
+  4. Once Dota 2 is open, navigate through its interface to find the latest
+     patch notes. Look for information about the hero "Lich" in the notes.
+
+  Report what you accomplished at each step, including:
+  - Whether YouTube Music opened and music started playing
+  - Whether Steam status was changed to Invisible
+  - Whether Dota 2 launched successfully
+  - What the latest patch notes say about Lich
+
+verify:
+  - type: exit_clean
+  - type: output_not_contains
+    value: "Error"
+  - type: output_contains
+    value: "YouTube Music"
+  - type: output_contains
+    value: "Invisible"
+  - type: output_contains
+    value: "Dota"
+  - type: output_contains
+    value: "Lich"
