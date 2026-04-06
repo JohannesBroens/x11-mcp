@@ -19,6 +19,8 @@ class TestScalingMath:
     def test_monitor_offset(self):
         """Second monitor at x=2560 offsets all coordinates."""
         s = ScalingState()
+        # Set root size explicitly so test doesn't depend on live display
+        s._root_size = (5120, 1440)
         s.update(
             screen_width=2560, screen_height=1440,
             api_width=1280, api_height=720,
@@ -26,9 +28,9 @@ class TestScalingMath:
         )
         assert s.api_to_screen(0, 0) == (2560, 0)
         sx, sy = s.api_to_screen(1280, 720)
-        # With rounding: int(1280/0.5 + 0.5) + 2560 = 5121, clamped to root-1
-        # Exact value depends on root detection; verify offset is applied
-        assert sx >= 5119 and sy >= 1439
+        # int(1280/0.5 + 0.5) + 2560 = 5121, clamped to 5119 (root_w - 1)
+        assert sx == 5119
+        assert sy == 1439
 
     def test_clamping(self):
         """Coordinates are clamped to virtual desktop bounds."""
