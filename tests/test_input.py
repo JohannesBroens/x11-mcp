@@ -1,4 +1,23 @@
-from x11_mcp.input import parse_key_combo, char_to_key_events
+from unittest.mock import MagicMock, patch
+
+from x11_mcp.input import _detect_screen_size, char_to_key_events, parse_key_combo
+
+
+class TestDetectScreenSize:
+    def test_xrandr_parses_current_resolution(self):
+        mock_result = MagicMock()
+        mock_result.stdout = (
+            "Screen 0: minimum 320 x 200, current 3840 x 2160, maximum 16384 x 16384\n"
+            "DP-0 connected primary 3840x2160+0+0\n"
+        )
+        with patch("subprocess.run", return_value=mock_result):
+            assert _detect_screen_size() == (3840, 2160)
+
+    def test_falls_back_on_xrandr_failure(self):
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            w, h = _detect_screen_size()
+            # Should still return something valid (xlib or default)
+            assert w > 0 and h > 0
 
 
 class TestKeyParsing:

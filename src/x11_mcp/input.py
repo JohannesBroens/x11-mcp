@@ -6,10 +6,36 @@ kernel module and appropriate permissions (see setup_uinput.sh).
 
 from __future__ import annotations
 
+import re
+import subprocess
 import time
 from typing import Optional
 
 from x11_mcp.scaling import get_state
+
+
+def _detect_screen_size() -> tuple[int, int]:
+    """Detect screen resolution via xrandr or python-xlib."""
+    try:
+        result = subprocess.run(
+            ["xrandr", "--query"], capture_output=True, text=True, timeout=5
+        )
+        match = re.search(r"current (\d+) x (\d+)", result.stdout)
+        if match:
+            return (int(match.group(1)), int(match.group(2)))
+    except Exception:
+        pass
+    try:
+        from Xlib import display as xdisplay
+        d = xdisplay.Display()
+        try:
+            geom = d.screen().root.get_geometry()
+            return (geom.width, geom.height)
+        finally:
+            d.close()
+    except Exception:
+        pass
+    return (1920, 1080)
 
 MODIFIER_MAP = {
     "ctrl": "KEY_LEFTCTRL",
@@ -152,7 +178,7 @@ class InputDevice:
         state = get_state()
         sw, sh = state.screen_size
         if sw == 0 or sh == 0:
-            sw, sh = 2560, 1440
+            sw, sh = _detect_screen_size()
 
         events = [
             uinput.BTN_LEFT, uinput.BTN_RIGHT, uinput.BTN_MIDDLE,
