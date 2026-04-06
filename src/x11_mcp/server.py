@@ -80,7 +80,10 @@ def screenshot(
     if mode == "region" and all(v is not None for v in [region_x, region_y, region_w, region_h]):
         region = {"x": region_x, "y": region_y, "w": region_w, "h": region_h}
 
-    b64, meta = take_screenshot(mode=mode, window_id=window_id, region=region, monitor=monitor)
+    try:
+        b64, meta = take_screenshot(mode=mode, window_id=window_id, region=region, monitor=monitor)
+    except Exception as e:
+        return [json.dumps({"error": str(e), "capture_mode": mode})]
     return [
         Image(data=b64, format="jpeg"),
         json.dumps(meta, indent=2),
@@ -100,7 +103,10 @@ def zoom(x: int, y: int, size: int = 512) -> list:
         y: Center y coordinate (API space).
         size: Crop size in pixels (default 512x512 at native resolution).
     """
-    b64, meta = take_screenshot(mode="zoom", zoom_center=(x, y), zoom_size=size)
+    try:
+        b64, meta = take_screenshot(mode="zoom", zoom_center=(x, y), zoom_size=size)
+    except Exception as e:
+        return [json.dumps({"error": str(e), "capture_mode": "zoom"})]
     return [
         Image(data=b64, format="jpeg"),
         json.dumps(meta, indent=2),
@@ -393,7 +399,10 @@ def focus_and_capture(
     time.sleep(0.2)
 
     # Take screenshot
-    b64, meta = take_screenshot(mode="fullscreen", monitor=monitor)
+    try:
+        b64, meta = take_screenshot(mode="fullscreen", monitor=monitor)
+    except Exception as e:
+        return [json.dumps({"error": str(e), "capture_mode": "fullscreen", "window_setup": move_result})]
     meta["window_setup"] = move_result
 
     return [
@@ -429,7 +438,10 @@ def click_and_verify(
     time.sleep(wait_ms / 1000.0)
 
     # Take verification screenshot
-    b64, meta = take_screenshot(mode="fullscreen")
+    try:
+        b64, meta = take_screenshot(mode="fullscreen")
+    except Exception as e:
+        return [json.dumps({"error": f"Screenshot failed after click: {e}", "click": {"x": x, "y": y}})]
     meta["click"] = {"x": x, "y": y, "button": button, "count": count}
 
     return [
