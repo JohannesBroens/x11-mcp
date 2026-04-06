@@ -34,6 +34,11 @@ from x11_mcp.accessibility import (
 mcp = FastMCP("x11-mcp")
 
 
+def _snapshot_window_ids() -> dict[int, str]:
+    """Capture current window IDs and titles for change detection."""
+    return {w["id"]: w["title"] for w in _list_windows()}
+
+
 def _resolve_window(window_id: int | None, name: str | None) -> int | None:
     """Resolve a window by ID, title substring, or WM_CLASS. Returns window ID or None."""
     if window_id is not None:
@@ -431,6 +436,9 @@ def click_and_verify(
         count: Number of clicks (1=single, 2=double, 3=triple).
         wait_ms: Milliseconds to wait after clicking before taking the screenshot (default 500).
     """
+    # Snapshot windows before click
+    before = _snapshot_window_ids()
+
     dev = get_input_device()
     dev.click(x, y, button=button, count=count)
 
@@ -443,6 +451,12 @@ def click_and_verify(
     except Exception as e:
         return [json.dumps({"error": f"Screenshot failed after click: {e}", "click": {"x": x, "y": y}})]
     meta["click"] = {"x": x, "y": y, "button": button, "count": count}
+
+    # Detect new windows
+    after = _snapshot_window_ids()
+    new_ids = set(after.keys()) - set(before.keys())
+    if new_ids:
+        meta["new_windows"] = [{"id": wid, "title": after[wid]} for wid in new_ids]
 
     return [
         Image(data=b64, format="jpeg"),
