@@ -641,8 +641,33 @@ def clipboard(action: str = "get", text: str | None = None) -> str:
 
 
 @mcp.tool()
+def open_app(name: str) -> str:
+    """Open an application by name using the desktop's application launcher.
+
+    Presses the Super key to open the launcher, types the app name, and
+    presses Enter to launch the top result. This is the PREFERRED way to
+    open applications — more reliable than clicking dock/taskbar icons.
+
+    Use launch_app() instead only when you know the exact binary command.
+
+    Args:
+        name: Application name to search for (e.g., "YouTube Music", "Steam", "Firefox").
+    """
+    dev = get_input_device()
+    # Press Super to open launcher
+    dev.key("super")
+    time.sleep(0.7)
+    # Type the app name
+    dev.type_text(name, delay_ms=30)
+    time.sleep(0.5)
+    # Press Enter to launch top result
+    dev.key("Return")
+    return f"Opened launcher and searched for '{name}'. Press Enter sent."
+
+
+@mcp.tool()
 def launch_app(command: str) -> str:
-    """Launch a desktop application.
+    """Launch a desktop application by command. Prefer open_app() to launch by name.
 
     After launching, use focus_and_capture() with the expected window title
     to move the new window to the primary monitor and get a screenshot.
