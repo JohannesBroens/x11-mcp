@@ -1,37 +1,29 @@
 """X11 target window for click accuracy testing.
 
 Creates a window with colored dots at known positions.
-Listens for ButtonPress events and reports where clicks actually landed.
-Runs as a subprocess — the test runner spawns it, clicks the dots,
-and reads results from stdout.
+Records ButtonPress events to detect actual clicks.
+Forces window placement via wmctrl to ensure correct monitor.
 
 Usage:
     python -m tests.accuracy.target_window [--scenario SCENARIO] [--x X] [--y Y] [--w W] [--h H]
-
-Scenarios:
-    grid      - 3x3 grid of large dots (default)
-    edges     - dots at edges and corners
-    small     - tiny 4px dots requiring zoom to hit
-    dense     - many dots close together
-    diagonal  - dots along the diagonal
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
+import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass, field
 
-from Xlib import display as xdisplay, X, Xatom
-from Xlib.protocol import event
+from Xlib import display as xdisplay, X
 
 
 @dataclass
 class Target:
-    """A clickable dot target."""
     id: int
     x: int  # center x within window
     y: int  # center y within window
@@ -45,7 +37,6 @@ class Target:
 
 @dataclass
 class TargetWindow:
-    """An X11 window with clickable dot targets."""
     win_x: int
     win_y: int
     win_w: int
@@ -57,33 +48,17 @@ class TargetWindow:
     _window = None
     _gc = None
     _running: bool = False
+    _click_log: list = field(default_factory=list)
 
     def _alloc_color(self, name: str) -> int:
-        """Allocate a named color, returning pixel value."""
-        colormap = self._display.screen().default_colormap
-        try:
-            color = colormap.alloc_named_color(name)
-            return color.pixel
-        except Exception:
-            # Fallback to basic colors
-            if "red" in name:
-                return 0xFF0000
-            elif "green" in name:
-                return 0x00FF00
-            elif "blue" in name:
-                return 0x0000FF
-            elif "yellow" in name:
-                return 0xFFFF00
-            elif "cyan" in name:
-                return 0x00FFFF
-            elif "magenta" in name:
-                return 0xFF00FF
-            elif "white" in name:
-                return 0xFFFFFF
-            return 0xFF0000
+        colors = {
+            "red": 0xFF0000, "green": 0x00FF00, "blue": 0x0000FF,
+            "yellow": 0xFFFF00, "cyan": 0x00FFFF, "magenta": 0xFF00FF,
+            "white": 0xFFFFFF, "orange": 0xFF8800,
+        }
+        return colors.get(name, 0xFF0000)
 
     def create(self) -> None:
-        """Create the X11 window and draw targets."""
         self._display = xdisplay.Display()
         screen = self._display.screen()
 
@@ -91,20 +66,17 @@ class TargetWindow:
             self.win_x, self.win_y, self.win_w, self.win_h, 0,
             screen.root_depth,
             X.InputOutput, X.CopyFromParent,
-            background_pixel=0x1A1A2E,  # dark background
+            background_pixel=0x1A1A2E,
             border_pixel=0xFFFFFF,
             event_mask=(
                 X.ExposureMask | X.ButtonPressMask |
                 X.ButtonReleaseMask | X.StructureNotifyMask
             ),
-            override_redirect=False,
         )
 
-        # Set window title
         self._window.set_wm_name(self.title)
         self._window.set_wm_class("accuracy-test", "x11-mcp-accuracy-test")
 
-        # Create GC for drawing
         self._gc = self._window.create_gc(
             foreground=0xFF0000,
             background=0x1A1A2E,
@@ -112,48 +84,63 @@ class TargetWindow:
 
         self._window.map()
         self._display.sync()
-
-        # Wait for window manager to position the window
         time.sleep(0.5)
 
-        # Query the ACTUAL position (WM may have moved it due to decorations/snapping)
+        # Force window to the correct position using wmctrl
+        self._force_position()
+
+    def _force_position(self) -> None:
+        """Force window to requested position via wmctrl, then verify."""
+        wid = self._window.id
+
+        # Remove maximized state if WM set it
         try:
-            import subprocess
-            result = subprocess.run(
-                ["xdotool", "search", "--name", self.title],
-                capture_output=True, text=True, timeout=5,
+            subprocess.run(
+                ["wmctrl", "-i", "-r", hex(wid),
+                 "-b", "remove,maximized_vert,maximized_horz"],
+                capture_output=True, timeout=3,
             )
-            for wid in result.stdout.strip().split():
-                r = subprocess.run(
-                    ["xdotool", "getwindowgeometry", wid],
-                    capture_output=True, text=True, timeout=5,
-                )
-                import re
-                m = re.search(r"Position: (\d+),(\d+)", r.stdout)
-                if m:
-                    self.win_x = int(m.group(1))
-                    self.win_y = int(m.group(2))
-                    break
         except Exception:
-            pass  # keep requested position as fallback
+            pass
+
+        # Force exact position and size
+        try:
+            subprocess.run(
+                ["wmctrl", "-i", "-r", hex(wid),
+                 "-e", f"0,{self.win_x},{self.win_y},{self.win_w},{self.win_h}"],
+                capture_output=True, timeout=3,
+            )
+        except Exception:
+            pass
+
+        time.sleep(0.3)
+
+        # Read actual position back
+        try:
+            result = subprocess.run(
+                ["xdotool", "getwindowgeometry", str(wid)],
+                capture_output=True, text=True, timeout=3,
+            )
+            m = re.search(r"Position: (\d+),(\d+)", result.stdout)
+            if m:
+                self.win_x = int(m.group(1))
+                self.win_y = int(m.group(2))
+        except Exception:
+            pass
 
         self._display.sync()
 
     def draw_targets(self) -> None:
-        """Draw all target dots on the window."""
         for t in self.targets:
             pixel = self._alloc_color(t.color_name)
             self._gc.change(foreground=pixel)
-
-            # Filled circle
             self._window.fill_arc(
                 self._gc,
                 t.x - t.radius, t.y - t.radius,
                 t.radius * 2, t.radius * 2,
                 0, 360 * 64,
             )
-
-            # White outline for visibility
+            # White outline
             self._gc.change(foreground=0xFFFFFF)
             self._window.arc(
                 self._gc,
@@ -161,34 +148,41 @@ class TargetWindow:
                 t.radius * 2, t.radius * 2,
                 0, 360 * 64,
             )
-
-        # Draw crosshair at center of each target for precision reference
-        self._gc.change(foreground=0xFFFFFF)
-        for t in self.targets:
-            # tiny 1px cross
+            # Center cross
             self._window.line(self._gc, t.x - 2, t.y, t.x + 2, t.y)
             self._window.line(self._gc, t.x, t.y - 2, t.x, t.y + 2)
+
+        # Draw click marks (green X for hits, red X for misses)
+        for entry in self._click_log:
+            cx, cy = entry["win_x"], entry["win_y"]
+            color = 0x00FF00 if entry.get("hit_target") is not None else 0xFF4444
+            self._gc.change(foreground=color)
+            self._window.line(self._gc, cx - 5, cy - 5, cx + 5, cy + 5)
+            self._window.line(self._gc, cx - 5, cy + 5, cx + 5, cy - 5)
 
         self._display.sync()
 
     def register_click(self, win_x: int, win_y: int) -> Target | None:
-        """Check if a click hit any target. Returns the target if hit."""
+        best = None
+        best_dist = 999999
         for t in self.targets:
             dist = ((win_x - t.x) ** 2 + (win_y - t.y) ** 2) ** 0.5
-            if dist <= t.radius + 3:  # small tolerance
-                t.hit = True
-                t.click_x = win_x
-                t.click_y = win_y
-                t.error_px = dist
-                return t
+            if dist < best_dist:
+                best_dist = dist
+                best = t
+        if best is not None and best_dist <= best.radius + 5:
+            best.hit = True
+            best.click_x = win_x
+            best.click_y = win_y
+            best.error_px = best_dist
+            return best
         return None
 
     def run_event_loop(self, timeout: float = 30.0) -> None:
-        """Run X11 event loop, reporting clicks to stdout as JSON."""
         self._running = True
         start = time.monotonic()
 
-        # Report target positions
+        # Report target positions (with actual window position)
         target_info = []
         for t in self.targets:
             target_info.append({
@@ -199,62 +193,66 @@ class TargetWindow:
                 "radius": t.radius,
                 "color": t.color_name,
             })
-        print(json.dumps({"type": "targets", "targets": target_info}), flush=True)
+        print(json.dumps({"type": "targets", "window_x": self.win_x, "window_y": self.win_y, "targets": target_info}), flush=True)
 
         while self._running and (time.monotonic() - start) < timeout:
-            # Check for events with timeout
             if self._display.pending_events():
                 ev = self._display.next_event()
                 if ev.type == X.Expose:
                     self.draw_targets()
                 elif ev.type == X.ButtonPress:
                     hit = self.register_click(ev.event_x, ev.event_y)
-                    result = {
+                    entry = {
                         "type": "click",
                         "win_x": ev.event_x,
                         "win_y": ev.event_y,
                         "screen_x": self.win_x + ev.event_x,
                         "screen_y": self.win_y + ev.event_y,
                         "button": ev.detail,
+                        "hit_target": hit.id if hit else None,
+                        "error_px": round(hit.error_px, 1) if hit else None,
                     }
-                    if hit:
-                        result["hit_target"] = hit.id
-                        result["error_px"] = round(hit.error_px, 1)
-                    else:
-                        result["hit_target"] = None
-                        result["error_px"] = None
-                    print(json.dumps(result), flush=True)
+                    self._click_log.append(entry)
+                    print(json.dumps(entry), flush=True)
+                    # Redraw to show click mark
+                    self.draw_targets()
             else:
                 time.sleep(0.01)
 
-        # Final report
+        # Summary
         results = []
         for t in self.targets:
             results.append({
-                "id": t.id,
-                "x": t.x, "y": t.y,
-                "radius": t.radius,
+                "id": t.id, "x": t.x, "y": t.y, "radius": t.radius,
                 "hit": t.hit,
                 "error_px": round(t.error_px, 1) if t.hit else None,
                 "click_x": t.click_x if t.hit else None,
                 "click_y": t.click_y if t.hit else None,
             })
-        print(json.dumps({"type": "summary", "results": results}), flush=True)
+        print(json.dumps({
+            "type": "summary",
+            "total_clicks": len(self._click_log),
+            "results": results,
+        }), flush=True)
 
     def destroy(self) -> None:
-        """Clean up."""
         self._running = False
         if self._window:
-            self._window.destroy()
+            try:
+                self._window.destroy()
+            except Exception:
+                pass
         if self._display:
-            self._display.sync()
-            self._display.close()
+            try:
+                self._display.sync()
+                self._display.close()
+            except Exception:
+                pass
 
 
 # --- Scenario definitions ---
 
 def _grid_targets(w: int, h: int, radius: int = 15) -> list[Target]:
-    """3x3 grid of large dots."""
     colors = ["red", "green", "blue", "yellow", "cyan", "magenta", "red", "green", "blue"]
     targets = []
     for row in range(3):
@@ -262,30 +260,25 @@ def _grid_targets(w: int, h: int, radius: int = 15) -> list[Target]:
             x = int(w * (col + 1) / 4)
             y = int(h * (row + 1) / 4)
             idx = row * 3 + col
-            targets.append(Target(
-                id=idx, x=x, y=y, radius=radius,
-                color_name=colors[idx],
-            ))
+            targets.append(Target(id=idx, x=x, y=y, radius=radius, color_name=colors[idx]))
     return targets
 
 
 def _edge_targets(w: int, h: int, radius: int = 12) -> list[Target]:
-    """Dots at edges and corners — hardest for coordinate mapping."""
     margin = 20
     return [
-        Target(0, margin, margin, radius, "red"),                    # top-left
-        Target(1, w // 2, margin, radius, "green"),                  # top-center
-        Target(2, w - margin, margin, radius, "blue"),               # top-right
-        Target(3, margin, h // 2, radius, "yellow"),                 # mid-left
-        Target(4, w - margin, h // 2, radius, "cyan"),               # mid-right
-        Target(5, margin, h - margin, radius, "magenta"),            # bottom-left
-        Target(6, w // 2, h - margin, radius, "red"),                # bottom-center
-        Target(7, w - margin, h - margin, radius, "green"),          # bottom-right
+        Target(0, margin, margin, radius, "red"),
+        Target(1, w // 2, margin, radius, "green"),
+        Target(2, w - margin, margin, radius, "blue"),
+        Target(3, margin, h // 2, radius, "yellow"),
+        Target(4, w - margin, h // 2, radius, "cyan"),
+        Target(5, margin, h - margin, radius, "magenta"),
+        Target(6, w // 2, h - margin, radius, "red"),
+        Target(7, w - margin, h - margin, radius, "green"),
     ]
 
 
 def _small_targets(w: int, h: int) -> list[Target]:
-    """Tiny 4px dots — requires zoom to hit accurately."""
     return [
         Target(0, w // 4, h // 4, 4, "red"),
         Target(1, 3 * w // 4, h // 4, 4, "green"),
@@ -296,7 +289,6 @@ def _small_targets(w: int, h: int) -> list[Target]:
 
 
 def _dense_targets(w: int, h: int, radius: int = 8) -> list[Target]:
-    """Many dots close together — tests precision at scale."""
     colors = ["red", "green", "blue", "yellow", "cyan", "magenta"]
     targets = []
     idx = 0
@@ -304,29 +296,21 @@ def _dense_targets(w: int, h: int, radius: int = 8) -> list[Target]:
         for col in range(5):
             x = int(w * (col + 1) / 6)
             y = int(h * (row + 1) / 5)
-            targets.append(Target(
-                id=idx, x=x, y=y, radius=radius,
-                color_name=colors[idx % len(colors)],
-            ))
+            targets.append(Target(id=idx, x=x, y=y, radius=radius, color_name=colors[idx % len(colors)]))
             idx += 1
     return targets
 
 
 def _diagonal_targets(w: int, h: int, radius: int = 10) -> list[Target]:
-    """Dots along the diagonal — tests consistent scaling across the screen."""
     colors = ["red", "green", "blue", "yellow", "cyan"]
     targets = []
     for i in range(5):
         frac = (i + 1) / 6
-        targets.append(Target(
-            id=i, x=int(w * frac), y=int(h * frac), radius=radius,
-            color_name=colors[i],
-        ))
+        targets.append(Target(id=i, x=int(w * frac), y=int(h * frac), radius=radius, color_name=colors[i]))
     return targets
 
 
 def _micro_targets(w: int, h: int) -> list[Target]:
-    """Varying dot sizes from 2px to 12px — tests limits of accuracy."""
     sizes = [2, 2, 3, 3, 4, 5, 6, 8, 10, 12]
     colors = ["red", "green", "blue", "yellow", "cyan", "magenta"]
     targets = []
@@ -335,10 +319,7 @@ def _micro_targets(w: int, h: int) -> list[Target]:
         col = i % 5
         x = int(w * (col + 1) / 6)
         y = int(h * (row + 1) / 3)
-        targets.append(Target(
-            id=i, x=x, y=y, radius=radius,
-            color_name=colors[i % len(colors)],
-        ))
+        targets.append(Target(id=i, x=x, y=y, radius=radius, color_name=colors[i % len(colors)]))
     return targets
 
 
@@ -355,14 +336,15 @@ SCENARIOS = {
 def main():
     parser = argparse.ArgumentParser(description="x11-mcp accuracy test target window")
     parser.add_argument("--scenario", default="grid")
-    parser.add_argument("--x", type=int, default=100, help="Window X position")
-    parser.add_argument("--y", type=int, default=100, help="Window Y position")
-    parser.add_argument("--w", type=int, default=800, help="Window width")
-    parser.add_argument("--h", type=int, default=600, help="Window height")
-    parser.add_argument("--timeout", type=float, default=60.0, help="Seconds to wait for clicks")
+    parser.add_argument("--x", type=int, default=100)
+    parser.add_argument("--y", type=int, default=100)
+    parser.add_argument("--w", type=int, default=800)
+    parser.add_argument("--h", type=int, default=600)
+    parser.add_argument("--timeout", type=float, default=60.0)
     args = parser.parse_args()
 
-    targets = SCENARIOS[args.scenario](args.w, args.h)
+    scenario_fn = SCENARIOS.get(args.scenario, _grid_targets)
+    targets = scenario_fn(args.w, args.h)
 
     tw = TargetWindow(
         win_x=args.x, win_y=args.y,

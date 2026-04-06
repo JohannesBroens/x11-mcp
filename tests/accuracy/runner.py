@@ -68,8 +68,8 @@ class ScenarioResult:
 
 STRESS_CONFIGS = [
     # (name, scenario, x, y, w, h, notes)
-    ("baseline", "grid", 400, 200, 800, 600, "Normal window on primary monitor"),
-    ("secondary-monitor", "grid", 2700, 200, 800, 600, "Window on secondary monitor (x=2700)"),
+    ("baseline", "grid", 400, 200, 800, 600, "Normal window, primary monitor forced via wmctrl"),
+    ("secondary-monitor", "grid", 2800, 200, 800, 600, "Window on secondary monitor (x=2800)"),
     ("ultra-wide", "diagonal", 100, 400, 1600, 120, "Ultra-wide aspect ratio (13:1)"),
     ("ultra-tall", "diagonal", 400, 50, 120, 1200, "Ultra-tall aspect ratio (1:10)"),
     ("off-right", "edges", 2200, 300, 800, 600, "Hanging off right edge of primary (2200+800=3000 > 2560)"),
