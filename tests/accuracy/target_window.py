@@ -217,34 +217,60 @@ class TargetWindow:
             })
         print(json.dumps({"type": "targets", "window_x": self.win_x, "window_y": self.win_y, "targets": target_info}), flush=True)
 
+        # Process X events on a separate thread so ButtonPress events
+        # are received even while the main thread is blocked on I/O
+        output_queue = []
+        output_lock = threading.Lock()
+
+        def x_event_worker():
+            while self._running and (time.monotonic() - start) < timeout:
+                try:
+                    # Use a short select-style wait via fileno
+                    if self._display.pending_events():
+                        ev = self._display.next_event()
+                        if ev.type == X.Expose:
+                            self.draw_targets()
+                        elif ev.type == X.ButtonPress:
+                            client_x = ev.event_x - self._client_offset_x
+                            client_y = ev.event_y - self._client_offset_y
+                            hit = self.register_click(client_x, client_y)
+                            entry = {
+                                "type": "click",
+                                "win_x": client_x,
+                                "win_y": client_y,
+                                "screen_x": self._frame_x + ev.event_x,
+                                "screen_y": self._frame_y + ev.event_y,
+                                "button": ev.detail,
+                                "hit_target": hit.id if hit else None,
+                                "error_px": round(hit.error_px, 1) if hit else None,
+                            }
+                            self._click_log.append(entry)
+                            with output_lock:
+                                output_queue.append(json.dumps(entry))
+                            # Redraw to show click mark
+                            self.draw_targets()
+                    else:
+                        time.sleep(0.005)
+                except Exception:
+                    break
+
+        worker = threading.Thread(target=x_event_worker, daemon=True)
+        worker.start()
+
+        # Main thread: periodically flush queued output and wait
         while self._running and (time.monotonic() - start) < timeout:
-            if self._display.pending_events():
-                ev = self._display.next_event()
-                if ev.type == X.Expose:
-                    self.draw_targets()
-                elif ev.type == X.ButtonPress:
-                    # event_x/y are relative to the outer frame, not client area
-                    # Subtract decoration offset to get client-area coords for hit detection
-                    client_x = ev.event_x - self._client_offset_x
-                    client_y = ev.event_y - self._client_offset_y
-                    hit = self.register_click(client_x, client_y)
-                    # Screen position: frame position + raw event coords
-                    entry = {
-                        "type": "click",
-                        "win_x": client_x,
-                        "win_y": client_y,
-                        "screen_x": self._frame_x + ev.event_x,
-                        "screen_y": self._frame_y + ev.event_y,
-                        "button": ev.detail,
-                        "hit_target": hit.id if hit else None,
-                        "error_px": round(hit.error_px, 1) if hit else None,
-                    }
-                    self._click_log.append(entry)
-                    print(json.dumps(entry), flush=True)
-                    # Redraw to show click mark
-                    self.draw_targets()
-            else:
-                time.sleep(0.01)
+            with output_lock:
+                for line in output_queue:
+                    print(line, flush=True)
+                output_queue.clear()
+            time.sleep(0.05)
+
+        # Drain remaining events
+        self._running = False
+        worker.join(timeout=1)
+        with output_lock:
+            for line in output_queue:
+                print(line, flush=True)
 
         # Summary
         results = []

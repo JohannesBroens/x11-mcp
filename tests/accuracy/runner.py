@@ -273,14 +273,18 @@ def run_config(
                 print(f"  T{t['id']}: win({t['win_x']},{t['win_y']}) + placed({placed_x},{placed_y}) = screen({screen_x},{screen_y}) -> API({api_x},{api_y})", end="")
 
             dev = get_input_device()
-            # Click directly (click() calls move() internally).
-            # Don't separately move+read — after a click on the target window,
-            # the next standalone move may be swallowed by the kernel before
-            # the window's focus grab settles.
-            dev.click(api_x, api_y, button="left", count=1)
-            time.sleep(0.05)
-
+            # Use uinput to move cursor (accurate positioning), then
+            # xdotool to click (reliable event delivery to target window).
+            # Uinput ABS moves are accurate but BTN events may not be
+            # delivered to the window under cursor on all WMs.
+            dev.move(api_x, api_y)
+            time.sleep(0.02)
             actual_x, actual_y = _get_mouse_position()
+            subprocess.run(
+                ["xdotool", "click", "1"],
+                capture_output=True, timeout=3,
+            )
+            time.sleep(0.05)
 
             error = ((actual_x - screen_x) ** 2 + (actual_y - screen_y) ** 2) ** 0.5
             hit = error <= radius + 2

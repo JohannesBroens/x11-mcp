@@ -107,7 +107,7 @@ def _patch_randr_errors() -> None:
         pass
 
 
-def capture_fullscreen(display=None, monitor: str | None = None) -> tuple[Image.Image, dict]:
+def capture_fullscreen(display=None, monitor: str | None = None, show_cursor: bool = False) -> tuple[Image.Image, dict]:
     from Xlib import X, display as xdisplay
 
     _patch_randr_errors()
@@ -125,13 +125,15 @@ def capture_fullscreen(display=None, monitor: str | None = None) -> tuple[Image.
             full_w, full_h, monitor=monitor
         )
 
-        # Hide cursor during capture
-        try:
-            from Xlib.ext import xfixes
-            xfixes.hide_cursor(root)
-            cursor_hidden = True
-        except Exception:
-            cursor_hidden = False
+        # Hide cursor during capture (unless show_cursor requested)
+        cursor_hidden = False
+        if not show_cursor:
+            try:
+                from Xlib.ext import xfixes
+                xfixes.hide_cursor(root)
+                cursor_hidden = True
+            except Exception:
+                pass
 
         # Try XShm fast path
         img = None
