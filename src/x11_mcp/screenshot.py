@@ -6,7 +6,6 @@ Scales to Claude's target resolution using LANCZOS resampling.
 
 from __future__ import annotations
 
-import base64
 import time as _time
 from io import BytesIO
 from typing import Optional
@@ -72,14 +71,18 @@ def scale_image(img: Image.Image) -> Image.Image:
     return img.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
 
-def encode_for_api(img: Image.Image) -> tuple[str, int]:
+def encode_for_api(img: Image.Image) -> tuple[bytes, int]:
+    """Encode image as JPEG bytes, adapting quality to stay under 100KB.
+
+    Returns (jpeg_bytes, byte_size). The MCP Image class handles
+    base64 encoding internally.
+    """
     for quality in [75, 50, 30]:
         data = encode_jpeg(img, quality=quality)
-        b64 = base64.b64encode(data).decode("ascii")
-        if len(b64) <= 100_000 or quality == 30:
-            return (b64, len(data))
+        if len(data) <= 75_000 or quality == 30:
+            return (data, len(data))
     data = encode_jpeg(img, quality=30)
-    return (base64.b64encode(data).decode("ascii"), len(data))
+    return (data, len(data))
 
 
 def _patch_randr_errors() -> None:
@@ -298,7 +301,7 @@ def take_screenshot(
     zoom_center: tuple[int, int] | None = None,
     zoom_size: int = 512,
     monitor: str | None = None,
-) -> tuple[str, dict]:
+) -> tuple[bytes, dict]:
     global _last_hash
     state = get_state()
 
