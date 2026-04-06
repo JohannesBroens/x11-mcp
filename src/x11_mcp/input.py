@@ -175,10 +175,10 @@ class UinputBackend:
             return
         import uinput
 
-        state = get_state()
-        sw, sh = state.screen_size
-        if sw == 0 or sh == 0:
-            sw, sh = _detect_screen_size()
+        # ABS range must cover the FULL virtual desktop (all monitors),
+        # not just the primary monitor. The kernel maps ABS_X/ABS_Y
+        # proportionally across the total root geometry.
+        sw, sh = _detect_screen_size()
 
         events = [
             uinput.BTN_LEFT, uinput.BTN_RIGHT, uinput.BTN_MIDDLE,
