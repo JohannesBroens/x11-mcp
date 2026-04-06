@@ -325,18 +325,36 @@ def _diagonal_targets(w: int, h: int, radius: int = 10) -> list[Target]:
     return targets
 
 
+def _micro_targets(w: int, h: int) -> list[Target]:
+    """Varying dot sizes from 2px to 12px — tests limits of accuracy."""
+    sizes = [2, 2, 3, 3, 4, 5, 6, 8, 10, 12]
+    colors = ["red", "green", "blue", "yellow", "cyan", "magenta"]
+    targets = []
+    for i, radius in enumerate(sizes):
+        row = i // 5
+        col = i % 5
+        x = int(w * (col + 1) / 6)
+        y = int(h * (row + 1) / 3)
+        targets.append(Target(
+            id=i, x=x, y=y, radius=radius,
+            color_name=colors[i % len(colors)],
+        ))
+    return targets
+
+
 SCENARIOS = {
     "grid": _grid_targets,
     "edges": _edge_targets,
     "small": _small_targets,
     "dense": _dense_targets,
     "diagonal": _diagonal_targets,
+    "micro": _micro_targets,
 }
 
 
 def main():
     parser = argparse.ArgumentParser(description="x11-mcp accuracy test target window")
-    parser.add_argument("--scenario", default="grid", choices=SCENARIOS.keys())
+    parser.add_argument("--scenario", default="grid")
     parser.add_argument("--x", type=int, default=100, help="Window X position")
     parser.add_argument("--y", type=int, default=100, help="Window Y position")
     parser.add_argument("--w", type=int, default=800, help="Window width")
