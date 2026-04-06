@@ -1,7 +1,7 @@
-"""Input injection via python-uinput (kernel-level, near-zero latency).
+"""Input injection backends for x11-mcp.
 
-Creates a virtual input device through /dev/uinput. Requires the uinput
-kernel module and appropriate permissions (see setup_uinput.sh).
+UinputBackend: kernel-level via python-uinput (fast, default).
+XdotoolBackend: XTest synthetic events via xdotool subprocess (works with CEF/Electron).
 """
 
 from __future__ import annotations
@@ -161,8 +161,8 @@ def _get_key_code(name: str) -> int:
     return code
 
 
-class InputDevice:
-    _instance: Optional["InputDevice"] = None
+class UinputBackend:
+    _instance: Optional["UinputBackend"] = None
     _device = None
 
     def __new__(cls):
@@ -286,5 +286,86 @@ class InputDevice:
         self._device.emit(code, 0)
 
 
-def get_input_device() -> InputDevice:
-    return InputDevice()
+class XdotoolBackend:
+    """Input injection via xdotool (XTest synthetic events).
+
+    Slower than uinput but works with CEF/Electron apps (Steam, Discord, VS Code)
+    that ignore kernel-level input events.
+    """
+    _instance: Optional["XdotoolBackend"] = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def _run(self, args: list[str]) -> None:
+        subprocess.run(["xdotool"] + args, capture_output=True, timeout=5)
+
+    def move(self, x: int, y: int) -> None:
+        state = get_state()
+        sx, sy = state.api_to_screen(x, y)
+        self._run(["mousemove", "--sync", str(sx), str(sy)])
+
+    def click(self, x: int, y: int, button: str = "left", count: int = 1) -> None:
+        state = get_state()
+        sx, sy = state.api_to_screen(x, y)
+        btn_map = {"left": "1", "right": "3", "middle": "2"}
+        btn = btn_map.get(button, "1")
+        self._run(["mousemove", "--sync", str(sx), str(sy)])
+        self._run(["click", "--repeat", str(count), btn])
+
+    def drag(self, start_x: int, start_y: int, end_x: int, end_y: int, button: str = "left") -> None:
+        state = get_state()
+        sx1, sy1 = state.api_to_screen(start_x, start_y)
+        sx2, sy2 = state.api_to_screen(end_x, end_y)
+        btn_map = {"left": "1", "right": "3", "middle": "2"}
+        btn = btn_map.get(button, "1")
+        self._run(["mousemove", "--sync", str(sx1), str(sy1)])
+        self._run(["mousedown", btn])
+        self._run(["mousemove", "--sync", str(sx2), str(sy2)])
+        self._run(["mouseup", btn])
+
+    def scroll(self, x: int, y: int, direction: str = "down", amount: int = 3) -> None:
+        state = get_state()
+        sx, sy = state.api_to_screen(x, y)
+        # xdotool scroll: button 4=up, 5=down, 6=left, 7=right
+        scroll_btn = {"up": "4", "down": "5", "left": "6", "right": "7"}
+        btn = scroll_btn.get(direction, "5")
+        self._run(["mousemove", "--sync", str(sx), str(sy)])
+        self._run(["click", "--repeat", str(amount), btn])
+
+    def type_text(self, text: str, delay_ms: int = 12) -> None:
+        self._run(["type", "--delay", str(delay_ms), "--", text])
+
+    def key(self, combo: str, repeat: int = 1) -> None:
+        self._run(["key", "--repeat", str(repeat), combo])
+
+    def hold_key(self, key_name: str, duration: float) -> None:
+        self._run(["keydown", key_name])
+        time.sleep(duration)
+        self._run(["keyup", key_name])
+
+
+_active_backend: str = "uinput"
+
+
+def set_input_backend(backend: str) -> str:
+    """Switch between 'uinput' and 'xdotool' input backends."""
+    global _active_backend
+    if backend not in ("uinput", "xdotool"):
+        raise ValueError(f"Unknown backend: {backend!r}. Use 'uinput' or 'xdotool'.")
+    _active_backend = backend
+    return _active_backend
+
+
+def get_input_backend() -> str:
+    """Return the name of the active input backend."""
+    return _active_backend
+
+
+def get_input_device():
+    """Return the active input backend instance."""
+    if _active_backend == "xdotool":
+        return XdotoolBackend()
+    return UinputBackend()

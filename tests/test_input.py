@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch, MagicMock, call
 
 from x11_mcp.input import _detect_screen_size, char_to_key_events, parse_key_combo
 
@@ -112,3 +112,98 @@ class TestResolveWindow:
     def test_window_id_takes_priority(self):
         from x11_mcp.server import _resolve_window
         assert _resolve_window(42, "anything") == 42
+
+
+class TestXdotoolBackend:
+    def test_click_constructs_correct_command(self):
+        from x11_mcp.input import XdotoolBackend
+        backend = XdotoolBackend()
+
+        # Mock scaling to return screen coords directly
+        mock_state = MagicMock()
+        mock_state.api_to_screen.return_value = (500, 300)
+
+        with patch("x11_mcp.input.get_state", return_value=mock_state):
+            with patch("subprocess.run") as mock_run:
+                backend.click(250, 150, button="left", count=1)
+
+                calls = mock_run.call_args_list
+                # Should have mousemove then click
+                assert any("mousemove" in str(c) for c in calls)
+                assert any("click" in str(c) for c in calls)
+                # Check button mapping: left = 1
+                click_call = [c for c in calls if "click" in str(c.args[0])][0]
+                assert "1" in click_call.args[0]
+
+    def test_right_click_uses_button_3(self):
+        from x11_mcp.input import XdotoolBackend
+        backend = XdotoolBackend()
+
+        mock_state = MagicMock()
+        mock_state.api_to_screen.return_value = (100, 200)
+
+        with patch("x11_mcp.input.get_state", return_value=mock_state):
+            with patch("subprocess.run") as mock_run:
+                backend.click(50, 100, button="right", count=1)
+                click_call = [c for c in mock_run.call_args_list if "click" in str(c.args[0])][0]
+                assert "3" in click_call.args[0]
+
+    def test_type_text_uses_xdotool_type(self):
+        from x11_mcp.input import XdotoolBackend
+        backend = XdotoolBackend()
+
+        with patch("subprocess.run") as mock_run:
+            backend.type_text("hello", delay_ms=20)
+            mock_run.assert_called_once()
+            args = mock_run.call_args.args[0]
+            assert args[0] == "xdotool"
+            assert "type" in args
+            assert "hello" in args
+
+    def test_key_combo(self):
+        from x11_mcp.input import XdotoolBackend
+        backend = XdotoolBackend()
+
+        with patch("subprocess.run") as mock_run:
+            backend.key("ctrl+c", repeat=1)
+            args = mock_run.call_args.args[0]
+            assert "key" in args
+            assert "ctrl+c" in args
+
+    def test_scroll_down(self):
+        from x11_mcp.input import XdotoolBackend
+        backend = XdotoolBackend()
+
+        mock_state = MagicMock()
+        mock_state.api_to_screen.return_value = (640, 360)
+
+        with patch("x11_mcp.input.get_state", return_value=mock_state):
+            with patch("subprocess.run") as mock_run:
+                backend.scroll(320, 180, direction="down", amount=3)
+                click_call = [c for c in mock_run.call_args_list if "click" in str(c.args[0])][0]
+                assert "5" in click_call.args[0]  # button 5 = scroll down
+
+
+class TestBackendSwitching:
+    def test_default_is_uinput(self):
+        from x11_mcp.input import get_input_backend
+        # Reset to default
+        from x11_mcp import input as inp
+        inp._active_backend = "uinput"
+        assert get_input_backend() == "uinput"
+
+    def test_switch_to_xdotool(self):
+        from x11_mcp.input import set_input_backend, get_input_backend, get_input_device, XdotoolBackend
+        set_input_backend("xdotool")
+        assert get_input_backend() == "xdotool"
+        assert isinstance(get_input_device(), XdotoolBackend)
+        # Reset
+        set_input_backend("uinput")
+
+    def test_invalid_backend_raises(self):
+        from x11_mcp.input import set_input_backend
+        import pytest
+        with pytest.raises(ValueError):
+            set_input_backend("invalid")
+        # Reset
+        set_input_backend("uinput")

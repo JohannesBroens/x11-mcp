@@ -15,7 +15,7 @@ from mcp.server.fastmcp import FastMCP, Image
 
 from x11_mcp.scaling import get_state
 from x11_mcp.screenshot import take_screenshot
-from x11_mcp.input import get_input_device
+from x11_mcp.input import get_input_device, set_input_backend, get_input_backend
 from x11_mcp.window import (
     list_windows as _list_windows,
     get_active_window,
@@ -209,6 +209,24 @@ def hold_key(key: str, duration: float = 1.0) -> str:
     dev = get_input_device()
     dev.hold_key(key, duration)
     return f"Held {key} for {duration}s"
+
+
+@mcp.tool()
+def set_input_mode(mode: str = "uinput") -> str:
+    """Switch input method between uinput (default) and xdotool (XTest).
+
+    Use "xdotool" mode when clicks don't register on Electron/CEF apps
+    like Steam, Discord, or VS Code. These apps need XTest synthetic
+    events rather than kernel-level uinput.
+
+    Use "uinput" mode (default) for native X11 applications — it's
+    faster and has lower latency.
+
+    Args:
+        mode: "uinput" for kernel-level input or "xdotool" for XTest synthetic events.
+    """
+    result = set_input_backend(mode)
+    return f"Input mode set to: {result}"
 
 
 @mcp.tool()
