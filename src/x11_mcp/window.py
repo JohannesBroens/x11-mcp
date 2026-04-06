@@ -58,32 +58,34 @@ def _list_windows_xlib() -> list[dict]:
     from Xlib import display as xdisplay, Xatom
 
     d = xdisplay.Display()
-    root = d.screen().root
+    try:
+        root = d.screen().root
 
-    prop = root.get_full_property(d.intern_atom("_NET_CLIENT_LIST"), Xatom.WINDOW)
-    if prop is None:
-        return []
+        prop = root.get_full_property(d.intern_atom("_NET_CLIENT_LIST"), Xatom.WINDOW)
+        if prop is None:
+            return []
 
-    windows = []
-    for win_id in prop.value:
-        try:
-            win = d.create_resource_object("window", win_id)
-            geom = win.get_geometry()
-            name_prop = win.get_full_property(d.intern_atom("_NET_WM_NAME"), 0)
-            name = name_prop.value.decode("utf-8", errors="replace") if name_prop else ""
-            windows.append({
-                "id": win_id,
-                "id_hex": hex(win_id),
-                "x": 0, "y": 0,
-                "width": geom.width,
-                "height": geom.height,
-                "class": "",
-                "title": name,
-            })
-        except Exception:
-            continue
-    d.close()
-    return windows
+        windows = []
+        for win_id in prop.value:
+            try:
+                win = d.create_resource_object("window", win_id)
+                geom = win.get_geometry()
+                name_prop = win.get_full_property(d.intern_atom("_NET_WM_NAME"), 0)
+                name = name_prop.value.decode("utf-8", errors="replace") if name_prop else ""
+                windows.append({
+                    "id": win_id,
+                    "id_hex": hex(win_id),
+                    "x": 0, "y": 0,
+                    "width": geom.width,
+                    "height": geom.height,
+                    "class": "",
+                    "title": name,
+                })
+            except Exception:
+                continue
+        return windows
+    finally:
+        d.close()
 
 
 def get_active_window() -> Optional[dict]:
@@ -147,23 +149,25 @@ def get_monitor_geometries() -> list[dict]:
         from Xlib.ext import randr
 
         d = xdisplay.Display()
-        root = d.screen().root
-        monitors = []
+        try:
+            root = d.screen().root
+            monitors = []
 
-        resources = randr.get_screen_resources(root)
-        for output_id in resources.outputs:
-            output_info = randr.get_output_info(d, output_id, resources.config_timestamp)
-            if output_info.crtc:
-                crtc = randr.get_crtc_info(d, output_info.crtc, resources.config_timestamp)
-                monitors.append({
-                    "x": crtc.x,
-                    "y": crtc.y,
-                    "width": crtc.width,
-                    "height": crtc.height,
-                    "name": output_info.name,
-                    "is_primary": len(monitors) == 0,
-                })
-        d.close()
+            resources = randr.get_screen_resources(root)
+            for output_id in resources.outputs:
+                output_info = randr.get_output_info(d, output_id, resources.config_timestamp)
+                if output_info.crtc:
+                    crtc = randr.get_crtc_info(d, output_info.crtc, resources.config_timestamp)
+                    monitors.append({
+                        "x": crtc.x,
+                        "y": crtc.y,
+                        "width": crtc.width,
+                        "height": crtc.height,
+                        "name": output_info.name,
+                        "is_primary": len(monitors) == 0,
+                    })
+        finally:
+            d.close()
         if monitors:
             return monitors
     except Exception:
@@ -173,8 +177,10 @@ def get_monitor_geometries() -> list[dict]:
     try:
         from Xlib import display as xdisplay
         d = xdisplay.Display()
-        geom = d.screen().root.get_geometry()
-        d.close()
+        try:
+            geom = d.screen().root.get_geometry()
+        finally:
+            d.close()
         return [{
             "x": 0, "y": 0,
             "width": geom.width, "height": geom.height,
@@ -195,11 +201,13 @@ def focus_window(window_id: int | None = None, name: str | None = None) -> bool:
             from Xlib import display as xdisplay, X
 
             d = xdisplay.Display()
-            win = d.create_resource_object("window", window_id)
-            win.raise_window()
-            win.set_input_focus(X.RevertToParent, 0)
-            d.sync()
-            d.close()
+            try:
+                win = d.create_resource_object("window", window_id)
+                win.raise_window()
+                win.set_input_focus(X.RevertToParent, 0)
+                d.sync()
+            finally:
+                d.close()
             return True
         except Exception:
             return False
@@ -224,10 +232,12 @@ def resize_window(window_id: int, width: int, height: int) -> bool:
         from Xlib import display as xdisplay
 
         d = xdisplay.Display()
-        win = d.create_resource_object("window", window_id)
-        win.configure(width=width, height=height)
-        d.sync()
-        d.close()
+        try:
+            win = d.create_resource_object("window", window_id)
+            win.configure(width=width, height=height)
+            d.sync()
+        finally:
+            d.close()
         return True
     except Exception:
         return False
@@ -243,10 +253,12 @@ def move_window(window_id: int, x: int, y: int) -> bool:
         from Xlib import display as xdisplay
 
         d = xdisplay.Display()
-        win = d.create_resource_object("window", window_id)
-        win.configure(x=x, y=y)
-        d.sync()
-        d.close()
+        try:
+            win = d.create_resource_object("window", window_id)
+            win.configure(x=x, y=y)
+            d.sync()
+        finally:
+            d.close()
         return True
     except Exception:
         return False
@@ -288,10 +300,12 @@ def ensure_on_monitor(
         try:
             from Xlib import display as xdisplay
             d = xdisplay.Display()
-            win = d.create_resource_object("window", window_id)
-            geom = win.get_geometry()
-            win_w, win_h = geom.width, geom.height
-            d.close()
+            try:
+                win = d.create_resource_object("window", window_id)
+                geom = win.get_geometry()
+                win_w, win_h = geom.width, geom.height
+            finally:
+                d.close()
         except Exception:
             win_w, win_h = MAX_WIDTH, MAX_HEIGHT
 
@@ -316,10 +330,12 @@ def ensure_on_monitor(
     try:
         from Xlib import display as xdisplay
         d = xdisplay.Display()
-        win = d.create_resource_object("window", window_id)
-        geom = win.get_geometry()
-        actual_w, actual_h = geom.width, geom.height
-        d.close()
+        try:
+            win = d.create_resource_object("window", window_id)
+            geom = win.get_geometry()
+            actual_w, actual_h = geom.width, geom.height
+        finally:
+            d.close()
     except Exception:
         pass
 

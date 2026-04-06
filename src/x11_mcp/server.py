@@ -497,9 +497,11 @@ def screen_info() -> str:
         from Xlib import display as xdisplay
 
         d = xdisplay.Display()
-        data = d.screen().root.query_pointer()
-        info["mouse"] = {"x": data.root_x, "y": data.root_y}
-        d.close()
+        try:
+            data = d.screen().root.query_pointer()
+            info["mouse"] = {"x": data.root_x, "y": data.root_y}
+        finally:
+            d.close()
     except Exception:
         info["mouse"] = {"error": "Could not query mouse position"}
     return json.dumps(info, indent=2)
@@ -540,9 +542,11 @@ def calibrate() -> str:
             from Xlib import display as xdisplay
 
             d = xdisplay.Display()
-            data = d.screen().root.query_pointer()
-            actual_sx, actual_sy = data.root_x, data.root_y
-            d.close()
+            try:
+                data = d.screen().root.query_pointer()
+                actual_sx, actual_sy = data.root_x, data.root_y
+            finally:
+                d.close()
         except Exception:
             results.append(f"  {name}: COULD NOT READ POSITION")
             continue
