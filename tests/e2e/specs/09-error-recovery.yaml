@@ -1,0 +1,15 @@
+name: "Screenshot error recovery"
+description: "Verify screenshot tool returns error JSON instead of crashing on invalid input"
+tags: [error, regression, smoke]
+timeout: 15
+
+task: |
+  Try to take a screenshot with mode="window" and an invalid window_id (99999999).
+  Report whether the tool returned an error message or crashed.
+  Then take a normal fullscreen screenshot to verify the pipeline still works.
+
+verify:
+  - type: output_contains
+    value: "error"
+    case_sensitive: false
+  - type: exit_clean

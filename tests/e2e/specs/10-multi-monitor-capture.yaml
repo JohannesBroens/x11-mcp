@@ -1,0 +1,19 @@
+name: "Multi-monitor screenshot targeting"
+description: "Verify screenshots target the correct monitor by name"
+tags: [screenshot, monitor, regression]
+timeout: 15
+
+task: |
+  Use screen_info to discover all monitors and identify the primary.
+  Take a screenshot of the primary monitor.
+  Report the monitor name and dimensions from the metadata.
+  If multiple monitors exist, verify the non-primary monitor can be targeted by name.
+
+verify:
+  - type: output_contains
+    value: "monitor"
+  - type: output_contains
+    value: "is_primary"
+  - type: output_not_contains
+    value: "error"
+    case_sensitive: false

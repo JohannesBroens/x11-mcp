@@ -1,0 +1,16 @@
+name: "New window detection after click"
+description: "Verify click_and_verify reports new_windows when an unexpected window opens"
+tags: [window, cleanup, regression]
+timeout: 20
+
+task: |
+  Take a screenshot to see the current state.
+  Note the current list of windows.
+  If possible, click on an area that might trigger a new window (like a dock icon).
+  Report whether new_windows was included in the click_and_verify metadata.
+
+verify:
+  - type: output_not_contains
+    value: "error"
+    case_sensitive: false
+  - type: exit_clean

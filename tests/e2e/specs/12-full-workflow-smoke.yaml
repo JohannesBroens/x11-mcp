@@ -1,0 +1,24 @@
+name: "Full automation workflow smoke test"
+description: "End-to-end smoke test exercising screenshot, window management, and input in sequence"
+tags: [workflow, smoke, regression]
+timeout: 30
+
+task: |
+  Execute this complete workflow and report each step:
+  1. Take a screenshot (verify capture_method is reported)
+  2. List windows (verify at least one window exists)
+  3. Get screen_info (verify monitors are detected)
+  4. Focus the first available window using focus_and_capture
+  5. Click the center of the screen using click_and_verify
+  6. Take a final screenshot
+  Report all metadata from each step.
+
+verify:
+  - type: output_contains
+    value: "capture_method"
+  - type: output_contains
+    value: "api_width"
+  - type: output_not_contains
+    value: "error"
+    case_sensitive: false
+  - type: exit_clean

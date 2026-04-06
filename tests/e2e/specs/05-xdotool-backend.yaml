@@ -1,0 +1,20 @@
+name: "Xdotool backend switching"
+description: "Verify input mode can be switched to xdotool and clicks still work"
+tags: [input, xdotool, regression]
+timeout: 20
+
+task: |
+  1. Switch input mode to xdotool using set_input_mode("xdotool")
+  2. Take a screenshot to initialize scaling
+  3. Perform a click at the center of the screen using click_and_verify
+  4. Switch back to uinput using set_input_mode("uinput")
+  5. Report the results of each step
+
+verify:
+  - type: output_contains
+    value: "xdotool"
+  - type: output_contains
+    value: "uinput"
+  - type: output_not_contains
+    value: "Error"
+    case_sensitive: false

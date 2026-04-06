@@ -1,0 +1,16 @@
+name: "App launcher via Super key"
+description: "Verify open_app() can launch an application through the desktop launcher"
+tags: [launcher, interaction]
+timeout: 30
+
+task: |
+  Use open_app to open the system file manager (e.g., "Files" or "Nautilus").
+  Wait 3 seconds for it to open.
+  Take a screenshot to verify something changed.
+  Report whether a new window appeared.
+
+verify:
+  - type: output_not_contains
+    value: "Error"
+    case_sensitive: false
+  - type: exit_clean

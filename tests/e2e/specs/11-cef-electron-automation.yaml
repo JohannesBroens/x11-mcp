@@ -1,0 +1,21 @@
+name: "CEF/Electron app interaction"
+description: "Verify automation works on Electron/CEF apps using xdotool backend"
+tags: [cef, electron, integration, steam]
+timeout: 45
+
+task: |
+  1. Switch to xdotool input mode
+  2. Find a running Electron/CEF app (Steam, Discord, VS Code, or Brave) by listing windows
+  3. Focus the app using focus_and_capture
+  4. Click somewhere safe in the app (like the center area) using click_and_verify
+  5. Verify the click registered by checking if the screenshot changed
+  6. Switch back to uinput mode
+  7. Report which app was found and whether the interaction succeeded
+
+verify:
+  - type: output_contains
+    value: "xdotool"
+  - type: output_not_contains
+    value: "Error"
+    case_sensitive: false
+  - type: exit_clean

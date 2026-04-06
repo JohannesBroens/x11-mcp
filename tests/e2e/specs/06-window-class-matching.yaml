@@ -1,0 +1,16 @@
+name: "Window matching by WM_CLASS"
+description: "Verify windows can be found by their WM_CLASS when title matching fails"
+tags: [window, regression]
+timeout: 15
+
+task: |
+  List all visible windows using list_windows.
+  Report the window titles AND their class fields.
+  Verify that class information is present for at least one window.
+
+verify:
+  - type: output_contains
+    value: "class"
+  - type: output_not_contains
+    value: "error"
+    case_sensitive: false
