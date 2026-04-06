@@ -115,16 +115,36 @@ class TargetWindow:
 
         time.sleep(0.3)
 
-        # Read actual position back
+        # Read actual CLIENT AREA position (not frame position)
+        # xdotool reports client area, xwininfo reports frame.
+        # We need the FRAME position because ButtonPress event_x/y are
+        # relative to the frame, not the client area.
+        self._frame_x = self.win_x
+        self._frame_y = self.win_y
+        self._client_offset_x = 0
+        self._client_offset_y = 0
         try:
             result = subprocess.run(
-                ["xdotool", "getwindowgeometry", str(wid)],
+                ["xwininfo", "-id", str(wid)],
                 capture_output=True, text=True, timeout=3,
             )
-            m = re.search(r"Position: (\d+),(\d+)", result.stdout)
-            if m:
-                self.win_x = int(m.group(1))
-                self.win_y = int(m.group(2))
+            for line in result.stdout.splitlines():
+                m = re.search(r"Absolute upper-left X:\s+(\d+)", line)
+                if m:
+                    self._frame_x = int(m.group(1))
+                m = re.search(r"Absolute upper-left Y:\s+(\d+)", line)
+                if m:
+                    self._frame_y = int(m.group(1))
+                m = re.search(r"Relative upper-left X:\s+(\d+)", line)
+                if m:
+                    self._client_offset_x = int(m.group(1))
+                m = re.search(r"Relative upper-left Y:\s+(\d+)", line)
+                if m:
+                    self._client_offset_y = int(m.group(1))
+
+            # win_x/win_y should be the client area position for target computation
+            self.win_x = self._frame_x + self._client_offset_x
+            self.win_y = self._frame_y + self._client_offset_y
         except Exception:
             pass
 
@@ -152,9 +172,11 @@ class TargetWindow:
             self._window.line(self._gc, t.x - 2, t.y, t.x + 2, t.y)
             self._window.line(self._gc, t.x, t.y - 2, t.x, t.y + 2)
 
-        # Draw click marks (green X for hits, red X for misses)
+        # Draw click marks at CLIENT coordinates (green X for hits, red X for misses)
         for entry in self._click_log:
             cx, cy = entry["win_x"], entry["win_y"]
+            if cx < 0 or cy < 0 or cx >= self.win_w or cy >= self.win_h:
+                continue  # skip out-of-bounds clicks
             color = 0x00FF00 if entry.get("hit_target") is not None else 0xFF4444
             self._gc.change(foreground=color)
             self._window.line(self._gc, cx - 5, cy - 5, cx + 5, cy + 5)
@@ -201,13 +223,18 @@ class TargetWindow:
                 if ev.type == X.Expose:
                     self.draw_targets()
                 elif ev.type == X.ButtonPress:
-                    hit = self.register_click(ev.event_x, ev.event_y)
+                    # event_x/y are relative to the outer frame, not client area
+                    # Subtract decoration offset to get client-area coords for hit detection
+                    client_x = ev.event_x - self._client_offset_x
+                    client_y = ev.event_y - self._client_offset_y
+                    hit = self.register_click(client_x, client_y)
+                    # Screen position: frame position + raw event coords
                     entry = {
                         "type": "click",
-                        "win_x": ev.event_x,
-                        "win_y": ev.event_y,
-                        "screen_x": self.win_x + ev.event_x,
-                        "screen_y": self.win_y + ev.event_y,
+                        "win_x": client_x,
+                        "win_y": client_y,
+                        "screen_x": self._frame_x + ev.event_x,
+                        "screen_y": self._frame_y + ev.event_y,
                         "button": ev.detail,
                         "hit_target": hit.id if hit else None,
                         "error_px": round(hit.error_px, 1) if hit else None,
