@@ -35,12 +35,19 @@ mcp = FastMCP("x11-mcp")
 
 
 def _resolve_window(window_id: int | None, name: str | None) -> int | None:
-    """Resolve a window by ID or title substring. Returns window ID or None."""
+    """Resolve a window by ID, title substring, or WM_CLASS. Returns window ID or None."""
     if window_id is not None:
         return window_id
     if name is not None:
-        for w in _list_windows():
-            if name.lower() in w.get("title", "").lower():
+        low = name.lower()
+        windows = _list_windows()
+        # Priority 1: title match
+        for w in windows:
+            if low in w.get("title", "").lower():
+                return w["id"]
+        # Priority 2: WM_CLASS match
+        for w in windows:
+            if low in w.get("class", "").lower():
                 return w["id"]
     return None
 
@@ -245,8 +252,9 @@ def list_windows() -> str:
         return "No windows found"
     lines = []
     for w in windows:
+        class_info = f" [{w['class']}]" if w.get('class') else ""
         lines.append(
-            f"[{w['id_hex']}] \"{w['title']}\" "
+            f"[{w['id_hex']}] \"{w['title']}\"{class_info} "
             f"({w['x']},{w['y']} {w['width']}x{w['height']})"
         )
     return "\n".join(lines)

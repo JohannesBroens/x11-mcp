@@ -71,3 +71,44 @@ class TestCharToKeyEvents:
     def test_tab(self):
         events = char_to_key_events("\t")
         assert events == [("key", "Tab")]
+
+
+class TestResolveWindow:
+    def test_title_match(self):
+        windows = [
+            {"id": 1, "title": "YouTube Music", "class": "chromium.Chromium"},
+            {"id": 2, "title": "Steam", "class": "steamwebhelper.steam"},
+        ]
+        with patch("x11_mcp.server._list_windows", return_value=windows):
+            from x11_mcp.server import _resolve_window
+            assert _resolve_window(None, "YouTube") == 1
+
+    def test_class_match_when_title_fails(self):
+        windows = [
+            {"id": 1, "title": "main Steam", "class": "steamwebhelper.steam"},
+            {"id": 2, "title": "Some Helper", "class": "steamwebhelper.steam"},
+        ]
+        with patch("x11_mcp.server._list_windows", return_value=windows):
+            from x11_mcp.server import _resolve_window
+            # "steamwebhelper" doesn't match any title but matches class
+            assert _resolve_window(None, "steamwebhelper") in (1, 2)
+
+    def test_title_takes_priority_over_class(self):
+        windows = [
+            {"id": 1, "title": "Some App", "class": "steam.Steam"},
+            {"id": 2, "title": "Steam Window", "class": "other.Other"},
+        ]
+        with patch("x11_mcp.server._list_windows", return_value=windows):
+            from x11_mcp.server import _resolve_window
+            # "Steam" matches window 2's title, not window 1's class
+            assert _resolve_window(None, "Steam") == 2
+
+    def test_returns_none_when_nothing_matches(self):
+        windows = [{"id": 1, "title": "Firefox", "class": "firefox.Firefox"}]
+        with patch("x11_mcp.server._list_windows", return_value=windows):
+            from x11_mcp.server import _resolve_window
+            assert _resolve_window(None, "Steam") is None
+
+    def test_window_id_takes_priority(self):
+        from x11_mcp.server import _resolve_window
+        assert _resolve_window(42, "anything") == 42

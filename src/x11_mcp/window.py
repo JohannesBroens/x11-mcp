@@ -72,13 +72,15 @@ def _list_windows_xlib() -> list[dict]:
                 geom = win.get_geometry()
                 name_prop = win.get_full_property(d.intern_atom("_NET_WM_NAME"), 0)
                 name = name_prop.value.decode("utf-8", errors="replace") if name_prop else ""
+                class_prop = win.get_wm_class()
+                wm_class = ".".join(class_prop) if class_prop else ""
                 windows.append({
                     "id": win_id,
                     "id_hex": hex(win_id),
                     "x": 0, "y": 0,
                     "width": geom.width,
                     "height": geom.height,
-                    "class": "",
+                    "class": wm_class,
                     "title": name,
                 })
             except Exception:
