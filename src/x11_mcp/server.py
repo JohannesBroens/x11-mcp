@@ -429,6 +429,10 @@ def click_and_verify(
     Combines mouse_click + wait + screenshot into one call. Use this instead of
     separate click + screenshot calls to ensure you always verify your actions.
 
+    For small targets (tiny buttons, small text): use zoom() first to get a
+    native-resolution view, then click using the zoom coordinates. Zoom mode
+    maps 1:1 to screen pixels with zero scaling error.
+
     Args:
         x: X coordinate (API space, from last screenshot).
         y: Y coordinate (API space, from last screenshot).

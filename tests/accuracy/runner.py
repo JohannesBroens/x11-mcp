@@ -313,13 +313,16 @@ def format_report(results: list[ScenarioResult]) -> str:
     lines = []
     lines.append("")
     lines.append("=" * 80)
-    lines.append("x11-mcp Click Accuracy Report (Full Workflow)")
+    lines.append("x11-mcp Click Accuracy Report")
     lines.append("=" * 80)
 
     total_targets = 0
     total_hits = 0
     all_errors = []
+    all_dx = []
+    all_dy = []
     failures = []
+    worst_clicks = []
 
     for r in results:
         total_targets += r.targets_total
@@ -330,11 +333,11 @@ def format_report(results: list[ScenarioResult]) -> str:
 
         lines.append(f"\n  [{status}] {r.name} ({r.backend})")
         lines.append(f"    {r.notes}")
-        lines.append(f"    Original: ({r.original_pos[0]},{r.original_pos[1]}) {r.original_size[0]}x{r.original_size[1]}"
-                     f" -> Placed: ({r.placed_pos[0]},{r.placed_pos[1]}) {r.placed_size[0]}x{r.placed_size[1]}")
-        lines.append(f"    Hits: {r.targets_hit}/{r.targets_total} ({hit_rate:.0f}%) | "
-                     f"Err: {r.mean_error:.1f}px avg, {r.max_error:.1f}px max | "
-                     f"Bias: x={r.bias_x:+.1f} y={r.bias_y:+.1f}")
+        lines.append(f"    {r.original_size[0]}x{r.original_size[1]} @ ({r.original_pos[0]},{r.original_pos[1]})"
+                     f" -> placed ({r.placed_pos[0]},{r.placed_pos[1]})")
+        lines.append(f"    Hits: {r.targets_hit}/{r.targets_total} | "
+                     f"WORST: {r.max_error:.1f}px | avg: {r.mean_error:.1f}px | "
+                     f"bias: x={r.bias_x:+.1f} y={r.bias_y:+.1f}")
 
         if status == "FAIL":
             failures.append(r.name)
@@ -342,6 +345,11 @@ def format_report(results: list[ScenarioResult]) -> str:
         for c in r.clicks:
             dx = c.actual_screen_x - c.target_screen_x
             dy = c.actual_screen_y - c.target_screen_y
+            all_errors.append(c.error_px)
+            all_dx.append(dx)
+            all_dy.append(dy)
+            worst_clicks.append((c.error_px, r.name, c))
+
             s = "HIT " if c.hit else "MISS"
             lines.append(
                 f"      T{c.target_id}: r={c.target_radius}px "
@@ -349,42 +357,70 @@ def format_report(results: list[ScenarioResult]) -> str:
                 f"({c.actual_screen_x},{c.actual_screen_y}) "
                 f"err={c.error_px}px dx={dx:+d} dy={dy:+d} [{s}]"
             )
-            all_errors.append(c.error_px)
+
+    # Sort worst clicks
+    worst_clicks.sort(key=lambda x: -x[0])
 
     lines.append("")
     lines.append("=" * 80)
+    lines.append("  WORST CASES (what matters for reliable automation):")
+    lines.append("-" * 80)
+    for err, config_name, c in worst_clicks[:10]:
+        dx = c.actual_screen_x - c.target_screen_x
+        dy = c.actual_screen_y - c.target_screen_y
+        s = "HIT " if c.hit else "MISS"
+        lines.append(
+            f"    {err:6.1f}px  [{s}] {config_name} T{c.target_id} r={c.target_radius}px  "
+            f"dx={dx:+d} dy={dy:+d}"
+        )
+
+    lines.append("")
+    lines.append("-" * 80)
     overall_rate = (total_hits / total_targets * 100) if total_targets else 0
     overall_mean = sum(all_errors) / len(all_errors) if all_errors else 0
     overall_max = max(all_errors) if all_errors else 0
 
-    lines.append(f"  TOTAL: {total_hits}/{total_targets} ({overall_rate:.0f}%) across {len(results)} configs")
-    lines.append(f"  Mean error: {overall_mean:.1f}px | Max: {overall_max:.1f}px")
+    # Percentiles
+    sorted_errors = sorted(all_errors)
+    p50 = sorted_errors[len(sorted_errors) // 2] if sorted_errors else 0
+    p95 = sorted_errors[int(len(sorted_errors) * 0.95)] if sorted_errors else 0
+    p99 = sorted_errors[int(len(sorted_errors) * 0.99)] if sorted_errors else 0
+
+    lines.append(f"  TOTAL: {total_hits}/{total_targets} ({overall_rate:.0f}%) hit across {len(results)} configs")
+    lines.append(f"  P50: {p50:.1f}px | P95: {p95:.1f}px | P99: {p99:.1f}px | MAX: {overall_max:.1f}px")
 
     if failures:
         lines.append(f"  FAILED: {', '.join(failures)}")
 
-    all_bias_x = [r.bias_x for r in results if r.targets_total > 0]
-    all_bias_y = [r.bias_y for r in results if r.targets_total > 0]
-    if all_bias_x:
-        bx = sum(all_bias_x) / len(all_bias_x)
-        by = sum(all_bias_y) / len(all_bias_y)
-        lines.append(f"  Bias: x={bx:+.1f}px y={by:+.1f}px {'(DRIFT!)' if abs(bx) > 3 or abs(by) > 3 else '(OK)'}")
+    # Bias analysis — this is the systematic drift
+    if all_dx:
+        mean_dx = sum(all_dx) / len(all_dx)
+        mean_dy = sum(all_dy) / len(all_dy)
+        lines.append(f"\n  SYSTEMATIC BIAS: dx={mean_dx:+.2f}px  dy={mean_dy:+.2f}px")
+        if abs(mean_dx) < 0.5 and abs(mean_dy) < 0.5:
+            lines.append(f"    -> NONE (sub-pixel, rounding only)")
+        elif abs(mean_dx) <= 1.5 and abs(mean_dy) <= 1.5:
+            lines.append(f"    -> MINIMAL (1px integer rounding)")
+        else:
+            lines.append(f"    -> SIGNIFICANT — investigate scaling or input backend")
 
+    # Error by dot size — worst case per size
     size_errors: dict[int, list[float]] = {}
     for r in results:
         for c in r.clicks:
             size_errors.setdefault(c.target_radius, []).append(c.error_px)
     if size_errors:
-        lines.append(f"\n  Accuracy by dot size:")
+        lines.append(f"\n  BY DOT SIZE (worst-case matters):")
         for radius in sorted(size_errors.keys()):
             errs = size_errors[radius]
+            worst = max(errs)
             hits = sum(1 for e in errs if e <= radius + 2)
-            mean = sum(errs) / len(errs)
-            lines.append(f"    r={radius:2d}px: {hits}/{len(errs)} hit ({mean:.1f}px avg)")
+            hittable = "YES" if worst <= radius + 2 else f"NO (worst {worst:.1f}px > r+2={radius+2}px)"
+            lines.append(f"    r={radius:2d}px: {hits}/{len(errs)} hit | worst={worst:.1f}px | hittable: {hittable}")
 
-    verdict = ("EXCELLENT" if overall_rate == 100 and overall_mean <= 3
-               else "GOOD" if overall_rate >= 90
-               else "FAIR" if overall_rate >= 70
+    verdict = ("EXCELLENT" if overall_rate == 100 and p99 <= 3
+               else "GOOD" if overall_rate >= 95 and p95 <= 5
+               else "FAIR" if overall_rate >= 80
                else "POOR")
     lines.append(f"\n  VERDICT: {verdict}")
     lines.append("=" * 80)

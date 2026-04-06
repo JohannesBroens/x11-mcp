@@ -19,6 +19,7 @@ class ScalingState:
         self._screen_height: int = 0
         self._api_width: int = 0
         self._api_height: int = 0
+        self._root_size: tuple[int, int] = (0, 0)
         self._zoom_active: bool = False
         self._zoom_region_x: int = 0
         self._zoom_region_y: int = 0
@@ -44,6 +45,15 @@ class ScalingState:
         self._scale_y = api_height / screen_height if screen_height else 1.0
         self._zoom_active = False
 
+        # Detect full virtual desktop size for multi-monitor clamping
+        if self._root_size == (0, 0):
+            try:
+                from x11_mcp.input import _detect_screen_size
+                self._root_size = _detect_screen_size()
+            except Exception:
+                self._root_size = (screen_width + monitor_offset_x,
+                                   screen_height + monitor_offset_y)
+
     def set_zoom(self, region_x: int, region_y: int, region_w: int, region_h: int) -> None:
         self._zoom_active = True
         self._zoom_region_x = region_x
@@ -59,12 +69,19 @@ class ScalingState:
             sx = x + self._zoom_region_x
             sy = y + self._zoom_region_y
         else:
-            sx = int(x / self._scale_x) + self._monitor_offset_x
-            sy = int(y / self._scale_y) + self._monitor_offset_y
-        total_w = self._screen_width + self._monitor_offset_x
-        total_h = self._screen_height + self._monitor_offset_y
-        sx = max(0, min(sx, total_w))
-        sy = max(0, min(sy, total_h))
+            # Round to nearest pixel instead of truncating toward zero.
+            # Without +0.5: int(307/0.5) = int(614.0) = 614, but edge cases
+            # like int(306.9999/0.5) = int(613.999) = 613 cause -1px drift.
+            sx = int(x / self._scale_x + 0.5) + self._monitor_offset_x
+            sy = int(y / self._scale_y + 0.5) + self._monitor_offset_y
+        # Clamp to full virtual desktop (all monitors), not just the
+        # current screenshot's monitor. This allows clicking on any monitor.
+        root_w, root_h = self._root_size if self._root_size != (0, 0) else (
+            self._screen_width + self._monitor_offset_x,
+            self._screen_height + self._monitor_offset_y,
+        )
+        sx = max(0, min(sx, root_w - 1))
+        sy = max(0, min(sy, root_h - 1))
         return (sx, sy)
 
     def screen_to_api(self, x: int, y: int) -> tuple[int, int]:
