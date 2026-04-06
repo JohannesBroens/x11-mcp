@@ -201,11 +201,35 @@ class UinputBackend:
         self._device.emit(u.ABS_X, sx, syn=False)
         self._device.emit(u.ABS_Y, sy)
 
+    def _read_cursor(self) -> tuple[int, int] | None:
+        """Read actual cursor position. Returns None on failure."""
+        try:
+            r = subprocess.run(
+                ["xdotool", "getmouselocation"],
+                capture_output=True, text=True, timeout=1,
+            )
+            m = re.match(r"x:(\d+) y:(\d+)", r.stdout)
+            if m:
+                return (int(m.group(1)), int(m.group(2)))
+        except Exception:
+            pass
+        return None
+
     def click(self, x: int, y: int, button: str = "left", count: int = 1) -> None:
         import uinput as u
         self._ensure_device()
-        self.move(x, y)
-        time.sleep(0.01)
+        state = get_state()
+        target_sx, target_sy = state.api_to_screen(x, y)
+
+        # Move and verify cursor arrived. After focus grabs, the kernel
+        # may swallow the first ABS move. Retry up to 3 times.
+        for attempt in range(3):
+            self.move(x, y)
+            time.sleep(0.01)
+            pos = self._read_cursor()
+            if pos and abs(pos[0] - target_sx) <= 2 and abs(pos[1] - target_sy) <= 2:
+                break
+            time.sleep(0.02)
         btn = {"left": u.BTN_LEFT, "right": u.BTN_RIGHT, "middle": u.BTN_MIDDLE}[button]
         for _ in range(count):
             self._device.emit(btn, 1)

@@ -398,10 +398,8 @@ def focus_and_capture(
         return [msg]
 
     # Move to monitor + focus + optimize
+    # ensure_on_monitor now polls for WM settling internally — no blind sleep needed
     move_result = _ensure_on_monitor(window_id, monitor_name=monitor, optimize=True)
-
-    # Brief pause for window manager to settle
-    time.sleep(0.2)
 
     # Take screenshot
     try:

@@ -91,7 +91,7 @@ def _get_mouse_position() -> tuple[int, int]:
 
 
 def _move_window(wid: int, x: int, y: int, w: int, h: int) -> None:
-    """Move and resize a window via wmctrl."""
+    """Move and resize a window via wmctrl, polling until WM settles."""
     try:
         subprocess.run(
             ["wmctrl", "-i", "-r", hex(wid),
@@ -105,7 +105,17 @@ def _move_window(wid: int, x: int, y: int, w: int, h: int) -> None:
          "-e", f"0,{x},{y},{w},{h}"],
         capture_output=True, timeout=3,
     )
-    time.sleep(0.2)
+    # Poll until geometry stabilizes instead of blind sleep
+    prev = ""
+    for _ in range(20):
+        time.sleep(0.015)
+        r = subprocess.run(
+            ["xdotool", "getwindowgeometry", str(wid)],
+            capture_output=True, text=True, timeout=3,
+        )
+        if r.stdout == prev:
+            break  # stable
+        prev = r.stdout
 
 
 def _get_window_geometry(wid: int) -> tuple[int, int, int, int]:
@@ -235,7 +245,20 @@ def run_config(
         if verbose:
             print(f"  Scaling: screen={state.screen_size}, api={state.api_size}, offset={state.monitor_offset}")
 
-        # 8. Compute target screen positions using the PLACED window position
+        # 8. Pre-click to give the window focus and warm up the cursor.
+        # The WM swallows the first click to process focus/raise, and the
+        # uinput driver may not deliver the first ABS move after a focus
+        # change. Click center, then force-move cursor to (0,0) via xdotool
+        # to ensure subsequent moves work.
+        subprocess.run(["wmctrl", "-i", "-a", hex(wid)], capture_output=True, timeout=3)
+        time.sleep(0.05)
+        center_screen_x = placed_x + init_w // 2
+        center_screen_y = placed_y + init_h // 2
+        subprocess.run(["xdotool", "mousemove", str(center_screen_x), str(center_screen_y),
+                        "click", "1"], capture_output=True, timeout=3)
+        time.sleep(0.05)
+
+        # 9. Compute target screen positions using the PLACED window position
         # Targets are relative to window content area — placed_x/y is the content origin
         clicks = []
         for t in targets:
@@ -250,13 +273,14 @@ def run_config(
                 print(f"  T{t['id']}: win({t['win_x']},{t['win_y']}) + placed({placed_x},{placed_y}) = screen({screen_x},{screen_y}) -> API({api_x},{api_y})", end="")
 
             dev = get_input_device()
-            dev.move(api_x, api_y)
-            time.sleep(0.04)
+            # Click directly (click() calls move() internally).
+            # Don't separately move+read — after a click on the target window,
+            # the next standalone move may be swallowed by the kernel before
+            # the window's focus grab settles.
+            dev.click(api_x, api_y, button="left", count=1)
+            time.sleep(0.05)
 
             actual_x, actual_y = _get_mouse_position()
-
-            dev.click(api_x, api_y, button="left", count=1)
-            time.sleep(0.06)
 
             error = ((actual_x - screen_x) ** 2 + (actual_y - screen_y) ** 2) ** 0.5
             hit = error <= radius + 2

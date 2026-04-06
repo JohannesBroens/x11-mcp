@@ -326,20 +326,48 @@ def ensure_on_monitor(
     # Focus the window
     focus_window(window_id=window_id)
 
-    # Verify final geometry
-    time.sleep(0.1)
+    # Wait for WM to finish placing the window (poll, don't blind-sleep).
+    # The WM may take a few frames to process the move/resize. We poll the
+    # actual geometry until it stabilizes or we hit a timeout.
     actual_w, actual_h = win_w, win_h
-    try:
-        from Xlib import display as xdisplay
-        d = xdisplay.Display()
+    settled = False
+    prev_x, prev_y, prev_w, prev_h = -1, -1, -1, -1
+    for _ in range(20):  # max 20 polls * 15ms = 300ms worst case
+        time.sleep(0.015)
         try:
-            win = d.create_resource_object("window", window_id)
-            geom = win.get_geometry()
-            actual_w, actual_h = geom.width, geom.height
-        finally:
-            d.close()
-    except Exception:
-        pass
+            from Xlib import display as xdisplay
+            d = xdisplay.Display()
+            try:
+                win = d.create_resource_object("window", window_id)
+                geom = win.get_geometry()
+                coords = win.translate_coords(d.screen().root, 0, 0)
+                cur_x, cur_y = abs(coords.x), abs(coords.y)
+                cur_w, cur_h = geom.width, geom.height
+            finally:
+                d.close()
+
+            if (cur_x, cur_y, cur_w, cur_h) == (prev_x, prev_y, prev_w, prev_h):
+                # Geometry hasn't changed between polls — WM is done
+                actual_w, actual_h = cur_w, cur_h
+                settled = True
+                break
+            prev_x, prev_y, prev_w, prev_h = cur_x, cur_y, cur_w, cur_h
+        except Exception:
+            break
+
+    if not settled:
+        # Final read even if we didn't see stabilization
+        try:
+            from Xlib import display as xdisplay
+            d = xdisplay.Display()
+            try:
+                win = d.create_resource_object("window", window_id)
+                geom = win.get_geometry()
+                actual_w, actual_h = geom.width, geom.height
+            finally:
+                d.close()
+        except Exception:
+            pass
 
     result = {
         "window_id": window_id,
