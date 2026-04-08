@@ -46,6 +46,15 @@ set_input_mode("xdotool")            # switch to XTest for Electron/CEF apps
 open_app("YouTube Music")            # launch via desktop search
 ```
 
+## Ecosystem
+
+x11-mcp is the foundation layer — eyes and hands for AI on a Linux desktop. It pairs with other projects that build on top of it:
+
+| Project | Role |
+|---------|------|
+| **x11-mcp** | Desktop automation substrate (this repo) |
+| **[x11-mcp-voice](https://github.com/JohannesBroens/x11-mcp-voice)** | Voice-controlled desktop agent via wake word + local STT/TTS |
+
 ## Requirements
 
 - Linux with X11 (not Wayland)
