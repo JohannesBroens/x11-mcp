@@ -7,3 +7,8 @@ build/
 *.jpg
 *.png
 .pytest_cache/
+
+# Claude artifacts — memory, local MCP config, development plans
+.claude/
+.mcp.json
+docs/superpowers/
