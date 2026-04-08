@@ -34,8 +34,10 @@ def list_windows() -> list[dict]:
 
     windows = []
     for line in output.splitlines():
-        parts = line.split(None, 9)
-        if len(parts) < 10:
+        # wmctrl -l -G -x format: ID DESKTOP X Y W H CLASS HOST TITLE...
+        # split(None, 8) keeps the full title (including spaces) in parts[8]
+        parts = line.split(None, 8)
+        if len(parts) < 9:
             continue
         win_id = parts[0]
         try:
@@ -47,7 +49,7 @@ def list_windows() -> list[dict]:
                 "width": int(parts[4]),
                 "height": int(parts[5]),
                 "class": parts[6],
-                "title": parts[9] if len(parts) > 9 else parts[8],
+                "title": parts[8],
             })
         except (ValueError, IndexError):
             continue
