@@ -1,5 +1,13 @@
 # x11-mcp
 
+> **⚠️ This software gives an AI the ability to see your screen, move your mouse, and type on your keyboard at the kernel level.** There is no sandbox. There is no simulation. Every action it takes is indistinguishable from your own — to your operating system, your applications, and your accounts. The moment you grant a machine uinput access and a framebuffer, the distinction between human and automated intent disappears from the perspective of everything downstream. Your window manager cannot tell the difference. Neither can your bank.
+>
+> A coordinate miscalculation clicks the wrong button. A misunderstood context types into the wrong window. The machine does not hesitate, does not double-check, and `Ctrl+Z` does not cover everything. We tend to think of computer control as reversible — but an email sent, a file overwritten, a dialog confirmed cannot be unsent, unwritten, or unconfirmed.
+>
+> **This is an experimental research project.** It exists to explore a question that will only become more pressing: what happens when AI can operate a computer the way we do? Not through constrained APIs, but through the same eyes and hands? The answer is both more capable and more dangerous than it appears. Do not run this on a system where unintended actions carry real consequences. The author develops on a dedicated workstation and accepts the risk. Treat this as a study in capability, not an invitation to trust.
+
+---
+
 Native X11 MCP server for desktop automation on bare-metal Linux. Direct framebuffer capture via python-xlib, kernel-level input via python-uinput, hybrid vision + AT-SPI accessibility.
 
 Built for Claude Code. No Docker, no virtual displays.
